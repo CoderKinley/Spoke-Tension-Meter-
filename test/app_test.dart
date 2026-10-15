@@ -10,6 +10,128 @@ import 'controller_test.dart' show FakeAudio, konaWheel, pluck;
 
 void main() {
   testWidgets(
+    'Measure shows tension before setup and completes setup without changing tabs',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final audio = FakeAudio();
+      final c = LabController(audio: audio, repository: MemoryRepository());
+      await c.initialize();
+      await tester.pumpWidget(LabApp(controller: c));
+      expect(find.text('Tension estimate'), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('measure-tension-newtons')))
+            .data,
+        '— N',
+      );
+      final setup = find.byKey(const Key('measure-tension-setup'));
+      await tester.ensureVisible(setup);
+      await tester.tap(setup);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<DropdownButtonFormField<String>>(
+              find.byKey(const Key('wheel-preset')),
+            )
+            .initialValue,
+        konaProcess165Ar35.id,
+      );
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('spoke-count')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      await tester.ensureVisible(find.byKey(const Key('spoke-count')));
+      await tester.enterText(find.byKey(const Key('spoke-count')), '32');
+      await tester.ensureVisible(find.byKey(const Key('save-profile')));
+      await tester.tap(find.byKey(const Key('save-profile')));
+      await tester.pumpAndSettle();
+      expect(c.hasKonaReference, isTrue);
+      expect(c.wheel.left.contact, ContactMode.unknown);
+      await tester.ensureVisible(setup);
+      await tester.tap(setup);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('acknowledge-ideal-model')),
+      );
+      await tester.tap(find.byKey(const Key('acknowledge-ideal-model')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('apply-ideal-model')));
+      await tester.pumpAndSettle();
+      expect(c.idealSettings!.lengthMm, 272);
+      for (var i = 0; i < 3; i++) {
+        pluck(c, 350);
+      }
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('measure-tension-newtons')))
+            .data,
+        '— N',
+      );
+      final profile = find.byKey(const Key('measure-spoke-profile'));
+      await tester.ensureVisible(profile);
+      await tester.tap(profile);
+      await tester.pumpAndSettle();
+      final contact = find.byType(DropdownButtonFormField<ContactMode>);
+      await tester.ensureVisible(contact);
+      await tester.tap(contact);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Individual / not touching').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('save-profile')));
+      await tester.tap(find.byKey(const Key('save-profile')));
+      await tester.pumpAndSettle();
+      // Changed contact invalidates the earlier assumptions and captured plucks.
+      expect(c.idealSettings, isNull);
+      expect(c.pluckCount, 0);
+      await c.configureIdealString(272);
+      for (var i = 0; i < 3; i++) {
+        pluck(c, 350);
+      }
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('measure-tension-newtons')))
+            .data,
+        '≈ 894 N',
+      );
+      expect(
+        tester.getTopLeft(find.byKey(const Key('measure-tension-readout'))).dy,
+        lessThan(tester.getTopLeft(find.byKey(const Key('capture-button'))).dy),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await audio.stream.close();
+    },
+  );
+  testWidgets('Measure setup reuses an existing Kona wheel', (tester) async {
+    final audio = FakeAudio();
+    final repo = MemoryRepository(
+      AppData(wheels: [AppData.empty().wheels.single, konaWheel()]),
+    );
+    final c = LabController(audio: audio, repository: repo);
+    await c.initialize();
+    await tester.pumpWidget(LabApp(controller: c));
+    expect(find.text('Use Kona wheel'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('measure-tension-setup')));
+    await tester.tap(find.byKey(const Key('measure-tension-setup')));
+    await tester.pumpAndSettle();
+    expect(c.hasKonaReference, isTrue);
+    expect(c.data.wheels.length, 2);
+    expect(find.byKey(const Key('wheel-preset')), findsNothing);
+    expect(find.text('Set up tension calculation'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await audio.stream.close();
+  });
+  testWidgets(
     'Kona model requires acknowledgement, preserves decimals and displays gated tension',
     (tester) async {
       tester.view.physicalSize = const Size(360, 800);

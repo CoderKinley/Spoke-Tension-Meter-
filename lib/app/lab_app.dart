@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/dsp/pitch_analyzer.dart';
 import '../core/physics/tension.dart';
 import '../data/models.dart';
+import '../data/wheel_presets.dart';
 import '../features/profile_editor.dart';
 import '../features/kona_reference.dart';
 import 'lab_controller.dart';
@@ -57,7 +58,10 @@ class LabHome extends StatefulWidget {
 class _LabHomeState extends State<LabHome> {
   int tab = 0;
   LabController get c => widget.controller;
-  Future<void> editProfile({bool create = false}) async {
+  Future<void> editProfile({
+    bool create = false,
+    bool konaPreset = false,
+  }) async {
     await c.stop(discard: true);
     if (!mounted) {
       return;
@@ -66,8 +70,23 @@ class _LabHomeState extends State<LabHome> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (context) => ProfileEditor(controller: c, create: create),
+      builder: (context) => ProfileEditor(
+        controller: c,
+        create: create,
+        initialPreset: konaPreset ? konaProcess165Ar35 : null,
+      ),
     );
+  }
+
+  Future<void> setupKonaWheel() async {
+    final existing = c.data.wheels
+        .where((wheel) => wheel.equipment?.presetId == konaProcess165Ar35.id)
+        .firstOrNull;
+    if (existing != null) {
+      await c.select(selectedWheel: existing.id);
+    } else {
+      await editProfile(create: true, konaPreset: true);
+    }
   }
 
   void toast(String message) {
@@ -521,6 +540,12 @@ class _LabHomeState extends State<LabHome> {
             textAlign: TextAlign.center,
             style: const TextStyle(color: muted, fontSize: 13, height: 1.5),
           ),
+          const SizedBox(height: 16),
+          MeasureTensionReadout(
+            controller: c,
+            onSetupWheel: setupKonaWheel,
+            onEditProfile: () => editProfile(),
+          ),
           const SizedBox(height: 24),
           ValueListenableBuilder<List<double>>(
             valueListenable: c.waveform,
@@ -551,6 +576,10 @@ class _LabHomeState extends State<LabHome> {
       ),
     ),
     const SizedBox(height: 16),
+    if (c.hasKonaReference) ...[
+      KonaTensionPanel(controller: c),
+      const SizedBox(height: 16),
+    ],
     LabCard(
       padding: 18,
       child: Column(
@@ -608,10 +637,6 @@ class _LabHomeState extends State<LabHome> {
       'There is no universal target Hz. Start with the wheel unchanged, let each pluck decay, and compare repeated readings on the same side. The analyser covers roughly 80–2500 Hz; this is a detection range, not a tuning target.',
     ),
     const SizedBox(height: 12),
-    if (c.hasKonaReference) ...[
-      KonaTensionPanel(controller: c),
-      const SizedBox(height: 16),
-    ],
     const Note(
       'Validated tension measurements are unavailable. Experimental calculations use stated assumptions; frequency repeatability is not tension accuracy.',
       color: amber,

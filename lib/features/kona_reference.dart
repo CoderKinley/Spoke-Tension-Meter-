@@ -3,7 +3,119 @@ import '../app/lab_controller.dart';
 import '../app/theme.dart';
 import '../app/widgets.dart';
 import '../core/physics/tension.dart';
+import '../data/models.dart';
 import '../data/wheel_presets.dart';
+
+Future<void> showIdealStringDialog(
+  BuildContext context,
+  LabController controller,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => _IdealStringDialog(controller: controller),
+);
+
+/// Always visible with the frequency result, including before setup.
+class MeasureTensionReadout extends StatelessWidget {
+  const MeasureTensionReadout({
+    super.key,
+    required this.controller,
+    required this.onSetupWheel,
+    required this.onEditProfile,
+  });
+  final LabController controller;
+  final VoidCallback onSetupWheel, onEditProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final estimate = controller.idealEstimate;
+    final isKona = controller.hasKonaReference;
+    final settings = controller.idealSettings;
+    final hasExistingKona = controller.data.wheels.any(
+      (wheel) => wheel.equipment?.presetId == konaProcess165Ar35.id,
+    );
+    final contact = controller.wheel.spec(controller.side).contact;
+    return Container(
+      key: const Key('measure-tension-readout'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: amber.withValues(alpha: .06),
+        border: Border.all(color: amber.withValues(alpha: .25)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Tension estimate',
+            style: TextStyle(color: amber, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                estimate == null
+                    ? '— N'
+                    : '≈ ${estimate.newtons.toStringAsFixed(0)} N',
+                key: const Key('measure-tension-newtons'),
+                style: const TextStyle(color: amber, fontSize: 28),
+              ),
+              Text(
+                estimate == null
+                    ? '— kgf'
+                    : '≈ ${(estimate.newtons / TensionMath.newtonsPerKgf).toStringAsFixed(1)} kgf',
+                style: const TextStyle(color: amber, fontSize: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            estimate != null
+                ? 'Unvalidated · ${settings!.lengthMm} mm · assumed 2.0 mm steel. Accuracy is unknown.'
+                : !isKona
+                ? 'Choose your Kona wheel to set up the 272 mm, 2.0 mm steel reference model.'
+                : controller.idealEstimateIssue!,
+            style: const TextStyle(color: muted, fontSize: 12, height: 1.5),
+          ),
+          const SizedBox(height: 8),
+          if (!isKona)
+            OutlinedButton(
+              key: const Key('measure-tension-setup'),
+              onPressed: controller.saving ? null : onSetupWheel,
+              child: Text(
+                hasExistingKona ? 'Use Kona wheel' : 'Set up Kona wheel',
+              ),
+            )
+          else ...[
+            OutlinedButton(
+              key: const Key('measure-tension-setup'),
+              onPressed: controller.saving
+                  ? null
+                  : () => showIdealStringDialog(context, controller),
+              child: Text(
+                settings == null
+                    ? 'Set up tension calculation'
+                    : 'Edit calculation settings',
+              ),
+            ),
+            TextButton(
+              key: const Key('measure-spoke-profile'),
+              onPressed: controller.saving ? null : onEditProfile,
+              child: Text(
+                contact == ContactMode.unknown
+                    ? 'Confirm spoke contact in profile'
+                    : 'Edit spoke profile',
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
 
 class KonaFactoryReference extends StatelessWidget {
   const KonaFactoryReference({super.key});
@@ -96,10 +208,7 @@ class KonaTensionPanel extends StatelessWidget {
             key: const Key('configure-ideal-model'),
             onPressed: controller.saving
                 ? null
-                : () => showDialog<void>(
-                    context: context,
-                    builder: (_) => _IdealStringDialog(controller: controller),
-                  ),
+                : () => showIdealStringDialog(context, controller),
             child: const Text('Set length & assumptions'),
           ),
           if (settings != null)

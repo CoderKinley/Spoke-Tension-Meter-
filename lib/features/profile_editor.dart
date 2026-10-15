@@ -11,9 +11,11 @@ class ProfileEditor extends StatefulWidget {
     super.key,
     required this.controller,
     required this.create,
+    this.initialPreset,
   });
   final LabController controller;
   final bool create;
+  final BikeWheelPreset? initialPreset;
   @override
   State<ProfileEditor> createState() => _ProfileEditorState();
 }
@@ -59,6 +61,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
     material = spec.material;
     shape = spec.shape;
     contact = spec.contact;
+    if (widget.create && widget.initialPreset != null) {
+      selectPreset(widget.initialPreset!.id);
+    }
   }
 
   void selectPreset(String id) {
@@ -146,7 +151,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
               if (widget.create) ...[
                 DropdownButtonFormField<String>(
                   key: const Key('wheel-preset'),
-                  initialValue: 'custom',
+                  initialValue: widget.initialPreset?.id ?? 'custom',
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Start from a preset',
