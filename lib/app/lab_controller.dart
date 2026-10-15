@@ -1,0 +1,467 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import '../core/audio/audio_source.dart';
+import '../core/dsp/pitch_analyzer.dart';
+import '../core/physics/tension.dart';
+import '../data/models.dart';
+import '../data/repository.dart';
+
+class LabController extends ChangeNotifier {
+  LabController({required this.audio, required this.repository});
+  final AudioSource audio;
+  final AppRepository repository;
+  AppData data = AppData.empty();
+  bool loaded = false,
+      listening = false,
+      starting = false,
+      processing = false,
+      saving = false;
+  String? error;
+  String status = 'Ready when you are',
+      captureSource = 'Microphone not started';
+  String sessionId = DateTime.now().microsecondsSinceEpoch.toString();
+  String wheelId = 'first-wheel';
+  WheelSide side = WheelSide.left;
+  int spokeIndex = 1;
+  PitchResult? latest;
+  final waveform = ValueNotifier<List<double>>(const []);
+  final List<double> _plucks = [];
+  StreamSubscription<AudioPacket>? _subscription;
+  final List<double> _capture = [];
+  int _generation = 0,
+      _warmupSamples = 0,
+      _lastSequence = -1,
+      _rate = 0,
+      _quiet = 0;
+  double _noise = .001;
+  bool _armed = true, _disposed = false;
+  int get pluckCount => _plucks.length;
+  WheelProfile get wheel => data.wheels.firstWhere(
+    (w) => w.id == wheelId,
+    orElse: () => data.wheels.first,
+  );
+  String get fingerprint => wheel.fingerprint(side);
+  double? get frequencyHz {
+    if (_plucks.isEmpty || processing) {
+      return null;
+    }
+    final ordered = List<double>.from(_plucks)..sort();
+    final middle = ordered.length ~/ 2;
+    return ordered.length.isOdd
+        ? ordered[middle]
+        : (ordered[middle - 1] + ordered[middle]) / 2;
+  }
+
+  double get spreadPercent {
+    if (_plucks.length < 2) {
+      return 0;
+    }
+    final mean = _plucks.reduce((a, b) => a + b) / _plucks.length;
+    return 100 *
+        math.sqrt(
+          _plucks.fold<double>(0, (s, v) => s + (v - mean) * (v - mean)) /
+              (_plucks.length - 1),
+        ) /
+        mean;
+  }
+
+  bool get canSave =>
+      loaded &&
+      !saving &&
+      !starting &&
+      !processing &&
+      _plucks.length >= 3 &&
+      spreadPercent <= 1.5 &&
+      latest?.accepted == true;
+  bool get canReference => canSave && _plucks.length >= 5;
+  SoundReference? get reference =>
+      data.references.where((r) => r.fingerprint == fingerprint).lastOrNull;
+  List<SpokeReading> get sessionReadings => data.readings
+      .where(
+        (r) =>
+            r.sessionId == sessionId &&
+            r.wheelId == wheel.id &&
+            r.side == side &&
+            r.fingerprint == fingerprint,
+      )
+      .toList();
+  List<CalibrationPoint> get calibrationPoints =>
+      data.calibration.where((p) => p.fingerprint == fingerprint).toList();
+
+  ({CalibrationFit? fit, String? issue}) get calibrationSummary {
+    final points = calibrationPoints;
+    if (points.length < 5) return (fit: null, issue: null);
+    try {
+      return (fit: CalibrationFit.fit(points), issue: null);
+    } on ArgumentError {
+      return (
+        fit: null,
+        issue:
+            'These points cannot form a usable curve. Use five distinct levels with increasing force.',
+      );
+    }
+  }
+
+  Future<void> initialize() async {
+    try {
+      data = await repository.load();
+      wheelId = data.wheels.first.id;
+      loaded = true;
+    } catch (e) {
+      error = 'Saved data could not be read. It has been preserved. $e';
+    }
+    _notify();
+  }
+
+  Future<void> start() async {
+    if (listening || starting || !loaded) {
+      return;
+    }
+    resetPlucks();
+    error = null;
+    starting = true;
+    status = 'Opening microphone…';
+    final generation = ++_generation;
+    _warmupSamples = 0;
+    _lastSequence = -1;
+    _rate = 0;
+    _noise = .001;
+    _armed = true;
+    _notify();
+    try {
+      _subscription = audio.packets.listen(
+        _receive,
+        onError: (Object e) => _audioError(e),
+        onDone: () {
+          if (listening) {
+            unawaited(_audioError(StateError('Microphone stream closed.')));
+          }
+        },
+      );
+      listening = true;
+      final description = await audio.start();
+      if (generation != _generation || _disposed) {
+        await audio.stop();
+        return;
+      }
+      captureSource = description;
+      status = 'Listen to the room, then gently pluck one spoke.';
+    } catch (e) {
+      await _audioError(e);
+    } finally {
+      starting = false;
+      _notify();
+    }
+  }
+
+  Future<void> stop({bool discard = false}) async {
+    ++_generation;
+    listening = false;
+    starting = false;
+    processing = false;
+    if (!_disposed) waveform.value = const [];
+    _capture.clear();
+    final subscription = _subscription;
+    _subscription = null;
+    await subscription?.cancel();
+    try {
+      await audio.stop();
+    } catch (e) {
+      error = 'Could not close microphone: $e';
+    }
+    if (discard) {
+      resetPlucks();
+    }
+    status = 'Microphone stopped';
+    _notify();
+  }
+
+  Future<void> _audioError(Object e) async {
+    if (_disposed) {
+      return;
+    }
+    await stop(discard: true);
+    error = e is PlatformException
+        ? (e.message ?? 'Microphone unavailable')
+        : 'Audio interrupted: $e';
+    _notify();
+  }
+
+  void resetPlucks() {
+    _plucks.clear();
+    _capture.clear();
+    latest = null;
+    processing = false;
+    status = listening
+        ? 'Pluck the same spoke at least three times.'
+        : 'Ready when you are';
+    _notify();
+  }
+
+  void _receive(AudioPacket packet) {
+    if (!listening || _disposed) {
+      return;
+    }
+    if ((_lastSequence >= 0 && packet.sequence != _lastSequence + 1) ||
+        (_rate != 0 && packet.sampleRate != _rate)) {
+      unawaited(
+        _audioError(
+          StateError(
+            'Audio buffers were lost or the sample rate changed. Restart capture.',
+          ),
+        ),
+      );
+      return;
+    }
+    _lastSequence = packet.sequence;
+    _rate = packet.sampleRate;
+    final samples = packet.samples;
+    if (packet.sampleRate < 8000 ||
+        packet.sampleRate > 96000 ||
+        samples.any((sample) => !sample.isFinite)) {
+      unawaited(_audioError(const FormatException('Invalid audio packet')));
+      return;
+    }
+    if (samples.isEmpty) {
+      return;
+    }
+    final count = math.min(128, samples.length);
+    waveform.value = List<double>.generate(
+      count,
+      (i) => samples[i * samples.length ~/ count],
+      growable: false,
+    );
+    final rms = math.sqrt(
+      samples.fold<double>(0, (s, x) => s + x * x) / samples.length,
+    );
+    if (_warmupSamples < packet.sampleRate * .3) {
+      _noise = .7 * _noise + .3 * rms;
+      _warmupSamples += samples.length;
+      status = 'Measuring background noise…';
+      _notify();
+      return;
+    }
+    if (processing) {
+      return;
+    }
+    if (!_armed && _capture.isEmpty) {
+      _quiet = rms < math.max(.003, _noise * 2) ? _quiet + 1 : 0;
+      if (_quiet >= 3) {
+        _armed = true;
+        _quiet = 0;
+      }
+      return;
+    }
+    if (_capture.isNotEmpty || (_armed && rms > math.max(.006, _noise * 4))) {
+      _capture.addAll(samples);
+      _armed = false;
+      if (_capture.length >= 16896) {
+        final signal = List<double>.from(_capture.sublist(512, 16896));
+        _capture.clear();
+        processing = true;
+        status = 'Checking resonance…';
+        _notify();
+        final token = _generation, rate = packet.sampleRate;
+        compute(analyzePluckRequest, (signal, rate))
+            .then((result) {
+              if (!_disposed && listening && token == _generation) {
+                processing = false;
+                acceptAnalysis(result);
+              }
+            })
+            .catchError((Object e) {
+              if (!_disposed && token == _generation) {
+                unawaited(_audioError(e));
+              }
+            });
+      }
+    } else {
+      _noise = .98 * _noise + .02 * rms;
+      if (_plucks.isEmpty) {
+        status = 'Gently pluck one spoke. Let it ring between plucks.';
+        _notify();
+      }
+    }
+  }
+
+  @visibleForTesting
+  void acceptAnalysis(PitchResult result) {
+    final oldKind = latest?.kind;
+    latest = result;
+    status = result.message;
+    if (!result.accepted) {
+      _plucks.clear();
+      _notify();
+      return;
+    }
+    if (oldKind != null && oldKind != result.kind && _plucks.isNotEmpty) {
+      _plucks.clear();
+      status = 'Mode changed. Start a fresh repeat set.';
+    }
+    _plucks.add(result.frequencyHz!);
+    if (_plucks.length > 10) {
+      _plucks.removeAt(0);
+    }
+    if (_plucks.length >= 3 && spreadPercent > 1.5) {
+      status = 'Readings disagree. Reset and repeat on the same spoke.';
+    }
+    _notify();
+  }
+
+  Future<void> select({
+    String? selectedWheel,
+    WheelSide? selectedSide,
+    int? index,
+  }) async {
+    await stop(discard: true);
+    if (selectedWheel != null) {
+      wheelId = selectedWheel;
+      spokeIndex = 1;
+    }
+    if (selectedSide != null) {
+      side = selectedSide;
+      spokeIndex = 1;
+    }
+    if (index != null) {
+      spokeIndex = index;
+    }
+    spokeIndex = spokeIndex.clamp(1, wheel.spokeCount ~/ 2);
+    _notify();
+  }
+
+  Future<bool> _persist(AppData updated) async {
+    if (saving || !loaded) {
+      return false;
+    }
+    saving = true;
+    error = null;
+    _notify();
+    try {
+      await repository.save(updated);
+      data = updated;
+      return true;
+    } catch (e) {
+      error = 'Could not save. Existing data is unchanged. $e';
+      return false;
+    } finally {
+      saving = false;
+      _notify();
+    }
+  }
+
+  Future<bool> saveReading() async {
+    if (!canSave) {
+      return false;
+    }
+    final now = DateTime.now();
+    final reading = SpokeReading(
+      id: now.microsecondsSinceEpoch.toString(),
+      wheelId: wheel.id,
+      side: side,
+      spokeIndex: spokeIndex,
+      frequencyHz: frequencyHz!,
+      spreadPercent: spreadPercent,
+      plucks: pluckCount,
+      createdAt: now,
+      fingerprint: fingerprint,
+      mode: '${wheel.spec(side).contact.name}/${latest!.kind.name}',
+      captureSource: captureSource,
+      sessionId: sessionId,
+    );
+    final success = await _persist(
+      data.copyWith(readings: [...data.readings, reading]),
+    );
+    if (success) {
+      await stop(discard: true);
+      spokeIndex = spokeIndex % (wheel.spokeCount ~/ 2) + 1;
+      _notify();
+    }
+    return success;
+  }
+
+  Future<bool> saveReference(String name, {double? manualHz}) async {
+    if (manualHz == null && !canReference) {
+      return false;
+    }
+    if (name.trim().isEmpty ||
+        (manualHz != null &&
+            (!manualHz.isFinite || manualHz < 80 || manualHz > 2500))) {
+      return false;
+    }
+    final now = DateTime.now();
+    final ref = SoundReference(
+      id: now.microsecondsSinceEpoch.toString(),
+      name: name.trim(),
+      fingerprint: fingerprint,
+      frequencyHz: manualHz ?? frequencyHz!,
+      createdAt: now,
+      plucks: manualHz == null ? pluckCount : 0,
+      spreadPercent: manualHz == null ? spreadPercent : 0,
+      origin: manualHz == null ? 'recorded' : 'manual',
+      captureSource: manualHz == null ? captureSource : 'manual target',
+    );
+    return _persist(data.copyWith(references: [...data.references, ref]));
+  }
+
+  Future<bool> saveWheel(WheelProfile profile) async {
+    await stop(discard: true);
+    final wheels = [...data.wheels.where((w) => w.id != profile.id), profile];
+    final success = await _persist(data.copyWith(wheels: wheels));
+    if (success) {
+      wheelId = profile.id;
+      spokeIndex = 1;
+      _notify();
+    }
+    return success;
+  }
+
+  Future<bool> addCalibration(CalibrationPoint point) async {
+    if (point.fingerprint != fingerprint ||
+        !point.frequencyHz.isFinite ||
+        point.frequencyHz < 80 ||
+        point.frequencyHz > 2500 ||
+        !point.tensionNewtons.isFinite ||
+        point.tensionNewtons <= 0 ||
+        point.instrument.trim().isEmpty) {
+      return false;
+    }
+    return _persist(data.copyWith(calibration: [...data.calibration, point]));
+  }
+
+  Future<bool> export({required bool csv}) async {
+    await stop();
+    try {
+      return await repository.export(data, csv: csv);
+    } catch (e) {
+      error = 'Export failed: $e';
+      _notify();
+      return false;
+    }
+  }
+
+  Future<void> newSession() async {
+    await stop(discard: true);
+    sessionId = DateTime.now().microsecondsSinceEpoch.toString();
+    spokeIndex = 1;
+    _notify();
+  }
+
+  void _notify() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    waveform.dispose();
+    _generation++;
+    listening = false;
+    unawaited(_subscription?.cancel());
+    unawaited(audio.stop().catchError((Object _) {}));
+    super.dispose();
+  }
+}
