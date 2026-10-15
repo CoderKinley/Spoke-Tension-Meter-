@@ -7,6 +7,7 @@ import '../core/dsp/pitch_analyzer.dart';
 import '../core/physics/tension.dart';
 import '../data/models.dart';
 import '../data/repository.dart';
+import '../data/wheel_presets.dart';
 
 class LabController extends ChangeNotifier {
   LabController({required this.audio, required this.repository});
@@ -76,6 +77,86 @@ class LabController extends ChangeNotifier {
       spreadPercent <= 1.5 &&
       latest?.accepted == true;
   bool get canReference => canSave && _plucks.length >= 5;
+  bool get hasKonaReference =>
+      wheel.equipment?.presetId == konaProcess165Ar35.id;
+  IdealStringSettings? get idealSettings =>
+      data.idealSettings.where((s) => s.fingerprint == fingerprint).lastOrNull;
+  String? get idealEstimateIssue {
+    if (!hasKonaReference) return 'Select your Kona wheel preset first.';
+    if (idealSettings == null || !idealSettings!.isValid) {
+      return 'Apply the length and model assumptions to this side.';
+    }
+    if (wheel.spec(side).contact != ContactMode.individual) {
+      return 'Individual tension is unavailable for touching or unconfirmed spokes. Confirm the contact arrangement in the wheel profile.';
+    }
+    if (!canSave || latest?.kind != PitchKind.fundamental) {
+      return 'Capture three consistent, harmonic-supported fundamental readings first. Spectral peaks cannot produce a tension estimate.';
+    }
+    if (wheel.spec(side).material != 'Unknown' &&
+        wheel.spec(side).material != 'Steel') {
+      return 'The original-spec model assumes steel. This profile uses a different material.';
+    }
+    if (wheel.spec(side).shape != 'Unknown' &&
+        wheel.spec(side).shape != 'Round / uniform') {
+      return 'This ideal-string model does not support butted or bladed spokes.';
+    }
+    if (wheel.spec(side).buttProfile.trim().isNotEmpty ||
+        wheel.spec(side).widthMm != null ||
+        wheel.spec(side).thicknessMm != null) {
+      return 'The entered section conflicts with a uniform round spoke.';
+    }
+    final measuredDiameter = wheel.spec(side).diameterMm;
+    if (measuredDiameter != null &&
+        (!measuredDiameter.isFinite || (measuredDiameter - 2.0).abs() > .01)) {
+      return 'The entered diameter conflicts with the assumed 2.0 mm model.';
+    }
+    return null;
+  }
+
+  IdealStringEstimate? get idealEstimate {
+    if (idealEstimateIssue != null) return null;
+    final settings = idealSettings!;
+    final hz = frequencyHz!;
+    return IdealStringEstimate(
+      frequencyHz: hz,
+      newtons: TensionMath.idealRound(
+        frequencyHz: hz,
+        lengthMeters: settings.lengthMm / 1000,
+        diameterMeters: settings.diameterMm / 1000,
+        densityKgM3: settings.densityKgM3,
+      ),
+      settings: settings,
+    );
+  }
+
+  Future<bool> configureIdealString(double lengthMm) async {
+    final settings = IdealStringSettings(
+      fingerprint: fingerprint,
+      lengthMm: lengthMm,
+    );
+    if (!hasKonaReference || !settings.isValid) return false;
+    // Stop and discard old readings so a new model is never paired with a stale pluck.
+    await stop(discard: true);
+    if (fingerprint != settings.fingerprint) return false;
+    return _persist(
+      data.copyWith(
+        idealSettings: [
+          ...data.idealSettings.where(
+            (s) => s.fingerprint != settings.fingerprint,
+          ),
+          settings,
+        ],
+      ),
+    );
+  }
+
+  Future<bool> disableIdealString() => _persist(
+    data.copyWith(
+      idealSettings: data.idealSettings
+          .where((s) => s.fingerprint != fingerprint)
+          .toList(),
+    ),
+  );
   SoundReference? get reference =>
       data.references.where((r) => r.fingerprint == fingerprint).lastOrNull;
   List<SpokeReading> get sessionReadings => data.readings
@@ -369,6 +450,7 @@ class LabController extends ChangeNotifier {
       mode: '${wheel.spec(side).contact.name}/${latest!.kind.name}',
       captureSource: captureSource,
       sessionId: sessionId,
+      idealEstimate: idealEstimate,
     );
     final success = await _persist(
       data.copyWith(readings: [...data.readings, reading]),
@@ -406,6 +488,21 @@ class LabController extends ChangeNotifier {
   }
 
   Future<bool> saveWheel(WheelProfile profile) async {
+    for (final spec in [profile.left, profile.right]) {
+      final dimensions = [
+        spec.diameterMm,
+        spec.lengthMm,
+        spec.widthMm,
+        spec.thicknessMm,
+      ];
+      if (dimensions.any(
+        (value) => value != null && (!value.isFinite || value <= 0),
+      )) {
+        error = 'Spoke dimensions must be positive and finite.';
+        _notify();
+        return false;
+      }
+    }
     await stop(discard: true);
     final wheels = [...data.wheels.where((w) => w.id != profile.id), profile];
     final success = await _persist(data.copyWith(wheels: wheels));

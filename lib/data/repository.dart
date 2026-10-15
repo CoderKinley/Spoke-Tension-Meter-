@@ -86,6 +86,12 @@ String readingsCsv(AppData data) {
       'profile',
       'force_status',
       'algorithm',
+      'theoretical_newtons',
+      'theoretical_kgf',
+      'assumed_vibrating_length_mm',
+      'assumed_diameter_mm',
+      'assumed_density_kg_m3',
+      'theoretical_basis',
     ],
     ...data.readings.map(
       (r) => [
@@ -101,8 +107,16 @@ String readingsCsv(AppData data) {
         r.createdAt.toIso8601String(),
         r.captureSource,
         r.fingerprint,
-        'unavailable-unvalidated',
+        r.idealEstimate == null
+            ? 'unavailable-unvalidated'
+            : 'unvalidated-ideal-string',
         'fft-yin-v1',
+        r.idealEstimate?.newtons,
+        r.idealEstimate == null ? null : r.idealEstimate!.newtons / 9.80665,
+        r.idealEstimate?.settings.lengthMm,
+        r.idealEstimate?.settings.diameterMm,
+        r.idealEstimate?.settings.densityKgM3,
+        r.idealEstimate == null ? '' : IdealStringSettings.basis,
       ],
     ),
   ];

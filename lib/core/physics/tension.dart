@@ -1,7 +1,8 @@
 import 'dart:math' as math;
 import '../../data/models.dart';
 
-/// Research mathematics. No physically validated force profiles ship in v0.1.
+/// Research mathematics. Ideal-string estimates are unvalidated; no validated
+/// force profiles ship in v0.1.
 class TensionMath {
   static const newtonsPerKgf = 9.80665;
   static double idealRound({
@@ -34,7 +35,8 @@ class TensionMath {
     return 1200 * math.log(frequencyHz / referenceHz) / math.ln2;
   }
 
-  // User-entered points alone never constitute independent physical validation.
+  // This gate refers to validated force estimates. Experimental ideal-string
+  // values have their own explicit, unvalidated workflow and provenance.
   static bool get forceEstimatesAvailable => false;
 }
 

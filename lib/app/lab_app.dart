@@ -4,6 +4,7 @@ import '../core/dsp/pitch_analyzer.dart';
 import '../core/physics/tension.dart';
 import '../data/models.dart';
 import '../features/profile_editor.dart';
+import '../features/kona_reference.dart';
 import 'lab_controller.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -429,6 +430,16 @@ class _LabHomeState extends State<LabHome> {
             style: const TextStyle(color: muted, fontSize: 12),
           ),
         ),
+        if (c.wheel.equipment != null) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              c.wheel.equipment!.summary,
+              style: const TextStyle(color: muted, fontSize: 12),
+            ),
+          ),
+        ],
       ],
     ),
   );
@@ -594,7 +605,15 @@ class _LabHomeState extends State<LabHome> {
     ),
     const SizedBox(height: 20),
     const Note(
-      'Force estimates are unavailable until this configuration is physically validated. Frequency repeatability is not tension accuracy.',
+      'There is no universal target Hz. Start with the wheel unchanged, let each pluck decay, and compare repeated readings on the same side. The analyser covers roughly 80–2500 Hz; this is a detection range, not a tuning target.',
+    ),
+    const SizedBox(height: 12),
+    if (c.hasKonaReference) ...[
+      KonaTensionPanel(controller: c),
+      const SizedBox(height: 16),
+    ],
+    const Note(
+      'Validated tension measurements are unavailable. Experimental calculations use stated assumptions; frequency repeatability is not tension accuracy.',
       color: amber,
       icon: Icons.science_outlined,
     ),
@@ -874,7 +893,7 @@ class _LabHomeState extends State<LabHome> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Tag('FORCE ESTIMATES UNAVAILABLE', color: amber),
+            Tag('VALIDATED FORCE UNAVAILABLE', color: amber),
             SizedBox(height: 16),
             Text(
               'A frequency is a measurement.\nTension needs a validated model.',
@@ -882,7 +901,7 @@ class _LabHomeState extends State<LabHome> {
             ),
             SizedBox(height: 16),
             Note(
-              'This beta measures sound and stores reference observations. It contains no physically validated tension profiles. Adding points does not certify a model or unlock N/kgf readings.',
+              'This beta contains no physically validated tension profiles. The Kona ideal-string calculator provides explicitly unvalidated N/kgf estimates on Measure. Adding calibration points does not certify a model.',
               color: muted,
             ),
           ],

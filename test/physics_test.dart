@@ -3,6 +3,16 @@ import 'package:spoke_lab/core/physics/tension.dart';
 import 'package:spoke_lab/data/models.dart';
 
 void main() {
+  test('272 mm owner length gives the independent ideal-string example', () {
+    final force = TensionMath.idealRound(
+      frequencyHz: 350,
+      lengthMeters: .272,
+      diameterMeters: .002,
+      densityKgM3: 7850,
+    );
+    expect(force, closeTo(894.03272833218, 1e-9));
+    expect(force / TensionMath.newtonsPerKgf, closeTo(91.1659668013, 1e-9));
+  });
   test('SI calculation matches independently computed example', () {
     final force = TensionMath.idealRound(
       frequencyHz: 350,

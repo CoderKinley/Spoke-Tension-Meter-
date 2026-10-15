@@ -16,7 +16,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     }
-    expect(find.text('FORCE ESTIMATES UNAVAILABLE'), findsOneWidget);
+    expect(find.text('VALIDATED FORCE UNAVAILABLE'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 }

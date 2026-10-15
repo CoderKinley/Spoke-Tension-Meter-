@@ -19,6 +19,6 @@ Run `flutter devices`, then `flutter run -d <device-id>`. Use a stationary, unlo
 
 ## Absolute tension is a separate validation project
 
-This version cannot unlock force estimates. Before implementing that feature, obtain a calibrated mechanical reference and the correct chart for each spoke. Record reference uncertainty, exact geometry, tire state, crossing/contact condition and raw measurement provenance. Reserve independent observations for validation; do not evaluate a fit only on its training points. Define supported configurations, uncertainty and rejection thresholds from those results.
+This version provides no validated force conversion. The optional Kona ideal-string calculator displays explicitly unvalidated estimates with recorded assumptions; calibration observations do not enable validated measurements. Before relying on absolute tension, obtain a calibrated mechanical reference and the correct chart for each spoke. Record reference uncertainty, exact geometry, tire state, crossing/contact condition and raw measurement provenance. Reserve independent observations for validation; do not evaluate a fit only on its training points. Define supported configurations, uncertainty and rejection thresholds from those results.
 
 Never tighten a wheel to match an arbitrary tone or compare left and right sides as though their target tensions were equal. Use the rim manufacturer's specified limits and qualified inspection for structural decisions. The detailed study and proposed validation gates are in [PHASE_1_PLAN.md](../PHASE_1_PLAN.md).

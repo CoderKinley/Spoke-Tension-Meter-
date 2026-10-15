@@ -3,6 +3,8 @@ import '../app/lab_controller.dart';
 import '../app/theme.dart';
 import '../app/widgets.dart';
 import '../data/models.dart';
+import '../data/wheel_presets.dart';
+import 'kona_reference.dart';
 
 class ProfileEditor extends StatefulWidget {
   const ProfileEditor({
@@ -29,6 +31,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
   late String material, shape;
   late ContactMode contact;
   late final WheelProfile original;
+  late WheelEquipment? equipment;
+  BikeWheelPreset? preset;
+  String wheelPosition = 'front';
   bool busy = false;
   @override
   void initState() {
@@ -39,6 +44,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
             name: '',
           )
         : widget.controller.wheel;
+    equipment = original.equipment;
     final spec = original.spec(widget.controller.side);
     name = TextEditingController(text: original.name);
     count = TextEditingController(text: '${original.spokeCount}');
@@ -53,6 +59,22 @@ class _ProfileEditorState extends State<ProfileEditor> {
     material = spec.material;
     shape = spec.shape;
     contact = spec.contact;
+  }
+
+  void selectPreset(String id) {
+    setState(() {
+      preset = wheelPresets.where((p) => p.id == id).firstOrNull;
+      equipment = preset?.equipmentFor(wheelPosition);
+      name.text = preset?.wheelName(wheelPosition) ?? '';
+      // Require the actual wheel count; AR35 alone does not identify its build.
+      count.text = preset == null ? '32' : '';
+      for (final field in [tire, diameter, length, width, thickness, butt]) {
+        field.clear();
+      }
+      material = 'Unknown';
+      shape = 'Unknown';
+      contact = ContactMode.unknown;
+    });
   }
 
   @override
@@ -121,7 +143,77 @@ class _ProfileEditorState extends State<ProfileEditor> {
                 style: const TextStyle(color: mint),
               ),
               const SizedBox(height: 20),
+              if (widget.create) ...[
+                DropdownButtonFormField<String>(
+                  key: const Key('wheel-preset'),
+                  initialValue: 'custom',
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Start from a preset',
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: 'custom',
+                      child: Text('Custom wheel'),
+                    ),
+                    ...wheelPresets.map(
+                      (p) => DropdownMenuItem(
+                        value: p.id,
+                        child: Text(p.label, overflow: TextOverflow.ellipsis),
+                      ),
+                    ),
+                  ],
+                  onChanged: (id) {
+                    if (id != null) selectPreset(id);
+                  },
+                ),
+                const SizedBox(height: 14),
+                if (preset != null) ...[
+                  DropdownButtonFormField<String>(
+                    key: const Key('preset-wheel-position'),
+                    initialValue: wheelPosition,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Wheel position',
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'front',
+                        child: Text('Front wheel'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'rear',
+                        child: Text('Rear wheel'),
+                      ),
+                    ],
+                    onChanged: (position) {
+                      if (position == null) return;
+                      setState(() {
+                        wheelPosition = position;
+                        equipment = preset!.equipmentFor(position);
+                        name.text = preset!.wheelName(position);
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                ],
+              ],
+              if (equipment != null) ...[
+                Note(
+                  '${equipment!.summary}\nReplacement rims fitted around ${equipment!.replacementYearApprox}. Spoke build and rim variant need confirmation.',
+                ),
+                const SizedBox(height: 12),
+                const Note(
+                  'No target frequency is assigned. Enter the actual spoke count below; leave unknown spoke dimensions blank.',
+                  color: amber,
+                ),
+                const SizedBox(height: 20),
+                if (equipment!.presetId == konaProcess165Ar35.id)
+                  const KonaFactoryReference(),
+                const SizedBox(height: 12),
+              ],
               TextFormField(
+                key: const Key('wheel-name'),
                 controller: name,
                 decoration: const InputDecoration(labelText: 'Wheel name'),
                 validator: (s) =>
@@ -129,6 +221,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
               ),
               const SizedBox(height: 14),
               TextFormField(
+                key: const Key('spoke-count'),
                 controller: count,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
@@ -155,7 +248,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
+                key: ValueKey('material-${preset?.id ?? 'custom'}'),
                 initialValue: material,
+                isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Material'),
                 items:
                     [
@@ -165,16 +260,28 @@ class _ProfileEditorState extends State<ProfileEditor> {
                           'Titanium',
                           'Carbon / fibre',
                         ]
-                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                        .map(
+                          (s) => DropdownMenuItem(
+                            value: s,
+                            child: Text(s, overflow: TextOverflow.ellipsis),
+                          ),
+                        )
                         .toList(),
                 onChanged: (s) => setState(() => material = s!),
               ),
               const SizedBox(height: 14),
               DropdownButtonFormField<String>(
+                key: ValueKey('shape-${preset?.id ?? 'custom'}'),
                 initialValue: shape,
+                isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Shape'),
                 items: ['Unknown', 'Round / uniform', 'Butted', 'Bladed']
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                    .map(
+                      (s) => DropdownMenuItem(
+                        value: s,
+                        child: Text(s, overflow: TextOverflow.ellipsis),
+                      ),
+                    )
                     .toList(),
                 onChanged: (s) => setState(() => shape = s!),
               ),
@@ -200,6 +307,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
               ],
               const SizedBox(height: 14),
               DropdownButtonFormField<ContactMode>(
+                key: ValueKey('contact-${preset?.id ?? 'custom'}'),
                 initialValue: contact,
                 isExpanded: true,
                 decoration: const InputDecoration(
@@ -265,6 +373,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
                           right: widget.controller.side == WheelSide.right
                               ? spec
                               : original.right,
+                          equipment: equipment,
                         );
                         final ok = await widget.controller.saveWheel(wheel);
                         if (!context.mounted) {
