@@ -1,8 +1,27 @@
 # Spoke Lab
 
-An offline Flutter Android app for measuring bicycle spoke frequencies and comparing saved sound references. **Version 0.1 is a frequency/reference beta. It does not provide validated tension measurements or certify wheel safety.**
+An offline Flutter Android app that listens to bicycle spokes, measures their frequency, and maps saved readings to a wheel. Pluck, let the reading settle, then save and move to the next spoke. **Version 0.1 is a frequency/reference beta. It does not provide validated tension measurements or certify wheel safety.**
 
-## What is implemented
+## Screenshots
+
+The graphite and blue theme keeps Measure focused on frequency, waveform, and
+the wheel map. Amber highlights the selected spoke and cautions.
+
+| Measure and map | Inspect a saved spoke |
+| --- | --- |
+| <img src="docs/previews/measure.png" alt="Settled frequency, waveform, numbered wheel map, and Save and next control" width="300"> | <img src="docs/previews/spoke-details.png" alt="Saved frequency, repeat spread, history, and explicitly unvalidated tension estimate" width="300"> |
+
+| Wheel profiles | Sound references |
+| --- | --- |
+| <img src="docs/previews/wheels.png" alt="Wheel profiles and saved readings in the updated theme" width="300"> | <img src="docs/previews/tune.png" alt="Saved target frequency and sound comparison controls" width="300"> |
+
+<img src="docs/previews/measure-landscape.png" alt="Landscape frequency and waveform beside the interactive wheel" width="700">
+
+These previews render actual Flutter widgets with synthetic readings and host
+fonts. They are not phone captures or evidence of measurement accuracy. See the
+[complete screenshot gallery](docs/previews/README.md) and [theme research](docs/THEME.md).
+
+## Features
 
 - **Measure:** one fixed screen with frequency and waveform above an interactive numbered wheel. Repeated plucks settle to a median estimate; **Save & next** stores the selected spoke and advances while keeping the microphone open. Front/rear and left/right switches select independent maps. Tap a spoke to inspect its history or measure it again. See the [wheel-mapping workflow](docs/WHEEL_MAPPING.md).
 - **Sound references:** under the top-right tools menu, save five consistent plucks or enter a target frequency; compare Hz, percentage and cents within the same wheel-side configuration.
@@ -12,6 +31,16 @@ An offline Flutter Android app for measuring bicycle spoke frequencies and compa
 - **Experimental tension:** a separate **Tension** page contains setup and calculations; saved spoke details show any estimate attached to that reading. The setup button selects an existing Kona wheel or opens a new profile with that preset selected. The explicitly unvalidated ideal-string model starts with the owner's **272 mm** vibrating length and assumes uniform **2.0 mm steel, 7850 kg/m³**. Apply assumptions separately to each wheel side. Confirm individual contact in the profile and capture three consistent, two-window harmonic-supported fundamentals; unknown/coupled contact, short decays, spectral peaks and conflicting spoke specifications retain frequency-only behavior. Estimates and assumptions accompany saved readings and exports. See the [calculator details](docs/KONA_PROCESS_165_PRESET.md#experimental-tension-calculator).
 
 No account, server, paid service or runtime network access is needed. Audio is processed locally and discarded; only measurement metadata and frequency summaries are saved. Uninstalling removes local data: export anything you want to keep. JSON export is an archive; import is not implemented.
+
+## Measure your wheel
+
+1. Create or select a profile under **Wheels**. Presets and additional tools are also in the top-right menu.
+2. Select front/rear and left/right on **Measure**. Number spokes clockwise from the valve, viewed from the selected side; a 32-spoke wheel normally has 16 indexed positions per side in this app.
+3. Keep the wheel stationary and unloaded. Start listening in a quiet space, hold the phone near the spoke without touching it, and pluck gently.
+4. Let each ring decay and repeat the same spoke until **SETTLED** appears. Choose **Save & next** to record it, or use the arrow to skip without saving.
+5. Tap a numbered spoke for its details or to measure it again. Find **Sound references**, **Calibration**, and **Capture settings** in the tools menu; calculation settings are on **Tension**.
+
+Saved and settled states describe data capture and repeatability; they do not establish correct tension. See the [wheel-mapping guide](docs/WHEEL_MAPPING.md).
 
 ## Run on Android
 
@@ -24,7 +53,7 @@ flutter devices
 flutter run -d <android-device-id>
 ```
 
-Use USB debugging on a real phone for acoustic tests. A simulator is insufficient for microphone and physical validation. See [device validation](docs/DEVICE_VALIDATION.md) before using a wheel.
+Open the repository root in Android Studio with the Flutter and Dart plugins enabled, and choose an Android device as the run target. Use USB debugging on a real phone for acoustic tests. A simulator is insufficient for microphone and physical validation. See [device validation](docs/DEVICE_VALIDATION.md) before using a wheel.
 
 ```sh
 dart format lib test integration_test test_driver tools/direct_test_runner.dart
@@ -34,7 +63,7 @@ flutter test integration_test/app_test.dart -d <android-device-id>
 flutter build apk --debug
 ```
 
-The debug APK normally appears at `build/app/outputs/flutter-apk/app-debug.apk`. A diagnostic update was installed and opened on the owner's OnePlus 15 (CPH2745, Android 16); the owner confirmed microphone-level movement and prompt frequency detection. The diagnostic update reused the existing debug APK's native code with a newly compiled Dart kernel because this session cannot run the normal Flutter build. Full device integration tests and physical accuracy validation remain outstanding. Release signing still uses the Flutter template's debug key; configure your own signing before distribution.
+The debug APK normally appears at `build/app/outputs/flutter-apk/app-debug.apk`. A diagnostic update was installed and opened on the owner's OnePlus 15 (CPH2745, Android 16); the owner confirmed microphone-level movement and prompt frequency detection. The diagnostic update reused the existing debug APK's native code with a newly compiled Dart kernel because this session cannot run the normal Flutter build. That initial check preceded the latest dashboard/theme, which has not yet been verified on the phone. Full device integration tests and physical accuracy validation remain outstanding. Release signing still uses the Flutter template's debug key; configure your own signing before distribution.
 
 If Flutter's runner cannot start child processes on Windows, a diagnostic fallback executes the same unit/widget tests directly in Flutter's engine:
 
@@ -43,6 +72,13 @@ If Flutter's runner cannot start child processes on Windows, a diagnostic fallba
 ```
 
 This fallback uses test framework internals, supports the current tests, and does not replace device integration tests or a normal build.
+
+## Verification status
+
+- **65 unit/widget tests pass**, covering DSP, persistence, microphone lifecycle, wheel mapping, and compact/large-text/landscape layouts.
+- Static analysis is clean. The updated screenshot gallery renders from the current Flutter widgets with injected example data.
+- The checked core theme text/surface pairs exceed **4.5:1** contrast; this is not a full accessibility-conformance claim.
+- Physical frequency error, mechanical tension accuracy, and full device integration tests remain unverified. See [device validation](docs/DEVICE_VALIDATION.md).
 
 ## Measurement assumptions
 
@@ -62,10 +98,4 @@ An ideal uniform string obeys `T = 4 μ L² f²`; actual spokes introduce stiffn
 | `lib/data/` | Immutable records, JSON persistence and exports |
 | `test/`, `integration_test/` | Software checks and device smoke test |
 
-See [implementation and validation status](docs/IMPLEMENTATION_STATUS.md) for passed checks, remaining work and design decisions. `AGENTS.md` was preserved as requested.
-
-## Preview
-
-Rendered from actual Flutter widgets using injected measurement data; host fonts differ from Android.
-
-<img src="docs/previews/measure.png" alt="Settled frequency and interactive spoke wheel" width="300"> <img src="docs/previews/spoke-details.png" alt="Saved spoke frequency history and experimental tension" width="300">
+See [implementation and validation status](docs/IMPLEMENTATION_STATUS.md) for passed checks, remaining work and design decisions. Contributor instructions are in [AGENTS.md](AGENTS.md).
