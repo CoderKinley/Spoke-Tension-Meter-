@@ -10,12 +10,16 @@ void main() {
   ) async {
     await app.main();
     await tester.pumpAndSettle();
-    expect(find.text('Listen to your wheel.'), findsOneWidget);
-    for (final page in ['Tune', 'Wheels', 'Calibration']) {
+    expect(find.byKey(const Key('measure-dashboard')), findsOneWidget);
+    for (final page in ['Wheels', 'Tension', 'Measure']) {
       await tester.tap(find.text(page).last);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     }
+    await tester.tap(find.byKey(const Key('workshop-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calibration').last);
+    await tester.pumpAndSettle();
     expect(find.text('VALIDATED FORCE UNAVAILABLE'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });

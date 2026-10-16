@@ -13,7 +13,7 @@ class LabCard extends StatelessWidget {
 }
 
 class Tag extends StatelessWidget {
-  const Tag(this.text, {super.key, this.color = mint});
+  const Tag(this.text, {super.key, this.color = accent});
   final String text;
   final Color color;
   @override
@@ -42,7 +42,7 @@ class PageHeading extends StatelessWidget {
         Text(
           eyebrow.toUpperCase(),
           style: const TextStyle(
-            color: mint,
+            color: accent,
             fontSize: 11,
             letterSpacing: 2,
             fontWeight: FontWeight.w600,
@@ -118,7 +118,7 @@ class _AudioWavePainter extends CustomPainter {
       Offset(0, middle),
       Offset(size.width, middle),
       Paint()
-        ..color = mint.withValues(alpha: .15)
+        ..color = accent.withValues(alpha: .15)
         ..strokeWidth = 1,
     );
     if (samples.length < 2) return;
@@ -138,7 +138,7 @@ class _AudioWavePainter extends CustomPainter {
     canvas.drawPath(
       path,
       Paint()
-        ..color = mint
+        ..color = accent
         ..strokeWidth = 1.8
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
@@ -203,7 +203,7 @@ class _SpectrumPainter extends CustomPainter {
       return;
     }
     final pen = Paint()
-      ..color = mint
+      ..color = accent
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
     final path = Path()..moveTo(0, size.height);
@@ -261,7 +261,9 @@ class _WheelPainter extends CustomPainter {
       final angle = 2 * math.pi * (i - 1) / count - math.pi / 2;
       final end =
           center + Offset(math.cos(angle) * radius, math.sin(angle) * radius);
-      final color = measured.contains(i) ? mint : muted.withValues(alpha: .25);
+      final color = measured.contains(i)
+          ? accent
+          : muted.withValues(alpha: .25);
       canvas.drawLine(
         center,
         end,
@@ -295,7 +297,7 @@ class _WheelPainter extends CustomPainter {
       }
     }
     canvas.drawCircle(center, 10, Paint()..color = panel);
-    canvas.drawCircle(center, 6, Paint()..color = mint);
+    canvas.drawCircle(center, 6, Paint()..color = accent);
   }
 
   @override

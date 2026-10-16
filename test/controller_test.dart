@@ -54,6 +54,103 @@ void main() {
     await audio.stream.close();
   });
   test(
+    'save and next keeps capture active, clears old pitch and restores the map',
+    () async {
+      await c.saveWheel(konaWheel());
+      await c.start();
+      final beforeStops = audio.stops;
+      for (var i = 0; i < 3; i++) {
+        pluck(c, 350);
+      }
+      expect(await c.saveReading(continueListening: true), isTrue);
+      expect(c.listening, isTrue);
+      expect(audio.stops, beforeStops);
+      expect(c.spokeIndex, 2);
+      expect(c.pluckCount, 0);
+      expect(c.displayFrequencyHz, isNull);
+      audio.stream.add(AudioPacket(signal(350), 48000, 0));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        c.displayFrequencyHz,
+        isNull,
+        reason:
+            'The previous spoke must decay before the next position is armed.',
+      );
+      final otherAudio = FakeAudio();
+      final restored = LabController(audio: otherAudio, repository: repo);
+      await restored.initialize();
+      expect(restored.wheel.id, 'kona');
+      expect(restored.spokeIndex, 2);
+      expect(restored.mappedReadings[1]!.frequencyHz, 350);
+      await restored.newSession();
+      expect(restored.mappedReadings[1]!.frequencyHz, 350);
+      expect(restored.sessionReadings, isEmpty);
+      await restored.select(selectedSide: WheelSide.right);
+      expect(restored.mappedReadings, isEmpty);
+      restored.dispose();
+      await otherAudio.stream.close();
+    },
+  );
+  test(
+    'one quiet rolling frame gives live pitch without repeated-pluck gating',
+    () async {
+      await c.start();
+      audio.stream.add(
+        AudioPacket(
+          signal(350, harmonics: [.0007, .00035, .00018], decay: 10),
+          48000,
+          0,
+        ),
+      );
+      Future<void> waitForPitch(double hz) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while ((c.displayFrequencyHz == null ||
+                (c.displayFrequencyHz! - hz).abs() > 3.5) &&
+            DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(c.error, isNull);
+        expect(c.displayFrequencyHz, closeTo(hz, 3.5));
+      }
+
+      await waitForPitch(350);
+      expect(c.pluckCount, 0);
+      expect(c.canSave, isFalse);
+      expect(c.inputLevelDb.value, inInclusiveRange(-85, -50));
+      expect(c.pinComparison(), isTrue);
+      audio.stream.add(
+        AudioPacket(signal(280, harmonics: [.0007, .00035, .00018]), 48000, 1),
+      );
+      await waitForPitch(280);
+      expect(c.comparisonHz, closeTo(350, 3.5));
+      expect(c.comparisonCents, lessThan(-300));
+      expect(await c.saveReading(), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 1600));
+      expect(c.displayFrequencyHz, isNull);
+      expect(c.pinComparison(), isFalse);
+      await c.select(index: 2);
+      expect(c.comparisonHz, isNotNull);
+      await c.select(selectedSide: WheelSide.right);
+      expect(c.comparisonHz, isNull);
+    },
+  );
+  test(
+    'a comparison cannot mix a spectral peak with a confirmed fundamental',
+    () {
+      c.acceptAnalysis(
+        const PitchResult(
+          kind: PitchKind.spectralPeak,
+          frequencyHz: 700,
+          message: 'peak',
+        ),
+      );
+      expect(c.pinComparison(), isTrue);
+      pluck(c, 350);
+      expect(c.comparisonCompatible, isFalse);
+      expect(c.comparisonCents, isNull);
+    },
+  );
+  test(
     'Kona model starts fresh and saves an unvalidated assumption snapshot',
     () async {
       await c.saveWheel(konaWheel());
@@ -152,8 +249,13 @@ void main() {
       }
       expect(c.canSave, isTrue);
       expect(c.idealEstimate, isNull);
-      pluck(c, 350); // A mode change restarts the set.
-      expect(c.pluckCount, 1);
+      pluck(c, 350); // Agreeing frequencies can map, but stay frequency-only.
+      expect(c.pluckCount, 4);
+      pluck(c, 350);
+      pluck(c, 350);
+      expect(c.idealEstimate, isNull);
+      c.resetPlucks();
+      pluck(c, 350);
       pluck(c, 350);
       pluck(c, 350);
       expect(c.idealEstimate, isNotNull);
@@ -277,41 +379,53 @@ void main() {
     expect(c.frequencyHz, isNull);
     expect(c.listening, isFalse);
   });
-  test(
-    'streamed plucks pass onset, isolate analysis and repeat gating',
-    () async {
-      await c.start();
-      var sequence = 0;
-      Future<void> send(List<double> samples) async {
-        for (var offset = 0; offset < samples.length; offset += 2048) {
-          audio.stream.add(
-            AudioPacket(
-              samples.sublist(offset, (offset + 2048).clamp(0, samples.length)),
-              48000,
-              sequence++,
+  for (final amplitude in [.3, .0006]) {
+    test(
+      'streamed plucks at amplitude $amplitude pass onset, isolate analysis and repeat gating',
+      () async {
+        await c.start();
+        var sequence = 0;
+        Future<void> send(List<double> samples) async {
+          for (var offset = 0; offset < samples.length; offset += 2048) {
+            audio.stream.add(
+              AudioPacket(
+                samples.sublist(
+                  offset,
+                  (offset + 2048).clamp(0, samples.length),
+                ),
+                48000,
+                sequence++,
+              ),
+            );
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        await send(List.filled(16384, 0));
+        for (var repeat = 1; repeat <= 3; repeat++) {
+          await send(
+            signal(
+              350,
+              count: 18432,
+              decay: 3,
+              harmonics: [amplitude, amplitude * .5, amplitude * .25],
             ),
           );
+          final deadline = DateTime.now().add(const Duration(seconds: 5));
+          while (c.pluckCount < repeat &&
+              c.error == null &&
+              DateTime.now().isBefore(deadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+          }
+          expect(c.error, isNull);
+          expect(c.pluckCount, repeat, reason: c.status);
+          await send(List.filled(8192, 0));
         }
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
-
-      await send(List.filled(16384, 0));
-      for (var repeat = 1; repeat <= 3; repeat++) {
-        await send(signal(350, count: 18432, decay: 3));
-        final deadline = DateTime.now().add(const Duration(seconds: 5));
-        while (c.pluckCount < repeat &&
-            c.error == null &&
-            DateTime.now().isBefore(deadline)) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
-        expect(c.error, isNull);
-        expect(c.pluckCount, repeat, reason: c.status);
-        await send(List.filled(8192, 0));
-      }
-      expect(c.frequencyHz, closeTo(350, 3.5));
-      expect(c.canSave, isTrue);
-      expect(await c.saveReading(), isTrue);
-      expect(repo.data.readings.single.captureSource, 'test-device');
-    },
-  );
+        expect(c.frequencyHz, closeTo(350, 3.5));
+        expect(c.canSave, isTrue);
+        expect(await c.saveReading(), isTrue);
+        expect(repo.data.readings.single.captureSource, 'test-device');
+      },
+    );
+  }
 }

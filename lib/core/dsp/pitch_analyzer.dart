@@ -89,7 +89,7 @@ class PitchAnalyzer {
         message: 'Sound clipped. Pluck more gently or move the phone back.',
       );
     }
-    if (rms < .002) {
+    if (rms < .00003) {
       return const PitchResult(
         kind: PitchKind.rejected,
         message: 'Sound too quiet. Move the microphone closer.',

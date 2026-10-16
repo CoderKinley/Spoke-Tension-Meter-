@@ -12,10 +12,12 @@ class ProfileEditor extends StatefulWidget {
     required this.controller,
     required this.create,
     this.initialPreset,
+    this.initialPosition,
   });
   final LabController controller;
   final bool create;
   final BikeWheelPreset? initialPreset;
+  final String? initialPosition;
   @override
   State<ProfileEditor> createState() => _ProfileEditorState();
 }
@@ -35,7 +37,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
   late final WheelProfile original;
   late WheelEquipment? equipment;
   BikeWheelPreset? preset;
-  String wheelPosition = 'front';
+  String? wheelPosition;
   bool busy = false;
   @override
   void initState() {
@@ -47,6 +49,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
           )
         : widget.controller.wheel;
     equipment = original.equipment;
+    wheelPosition = original.wheelPosition ?? widget.initialPosition;
     final spec = original.spec(widget.controller.side);
     name = TextEditingController(text: original.name);
     count = TextEditingController(text: '${original.spokeCount}');
@@ -69,8 +72,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
   void selectPreset(String id) {
     setState(() {
       preset = wheelPresets.where((p) => p.id == id).firstOrNull;
-      equipment = preset?.equipmentFor(wheelPosition);
-      name.text = preset?.wheelName(wheelPosition) ?? '';
+      if (preset != null) wheelPosition ??= 'front';
+      equipment = preset?.equipmentFor(wheelPosition ?? 'front');
+      name.text = preset?.wheelName(wheelPosition ?? 'front') ?? '';
       // Require the actual wheel count; AR35 alone does not identify its build.
       count.text = preset == null ? '32' : '';
       for (final field in [tire, diameter, length, width, thickness, butt]) {
@@ -145,7 +149,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
               const SizedBox(height: 8),
               Text(
                 'Spoke settings apply to the ${widget.controller.side.name} side.',
-                style: const TextStyle(color: mint),
+                style: const TextStyle(color: accent),
               ),
               const SizedBox(height: 20),
               if (widget.create) ...[
@@ -173,36 +177,33 @@ class _ProfileEditorState extends State<ProfileEditor> {
                   },
                 ),
                 const SizedBox(height: 14),
-                if (preset != null) ...[
-                  DropdownButtonFormField<String>(
-                    key: const Key('preset-wheel-position'),
-                    initialValue: wheelPosition,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Wheel position',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'front',
-                        child: Text('Front wheel'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'rear',
-                        child: Text('Rear wheel'),
-                      ),
-                    ],
-                    onChanged: (position) {
-                      if (position == null) return;
-                      setState(() {
-                        wheelPosition = position;
-                        equipment = preset!.equipmentFor(position);
-                        name.text = preset!.wheelName(position);
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                ],
               ],
+              DropdownButtonFormField<String>(
+                key: const Key('preset-wheel-position'),
+                initialValue: wheelPosition,
+                validator: (value) =>
+                    value == null ? 'Select front or rear' : null,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Wheel position'),
+                items: const [
+                  DropdownMenuItem(value: 'front', child: Text('Front wheel')),
+                  DropdownMenuItem(value: 'rear', child: Text('Rear wheel')),
+                ],
+                onChanged: (position) {
+                  if (position == null) return;
+                  setState(() {
+                    wheelPosition = position;
+                    final currentPreset =
+                        preset ??
+                        wheelPresets
+                            .where((p) => p.id == equipment?.presetId)
+                            .firstOrNull;
+                    equipment = currentPreset?.equipmentFor(position);
+                    if (preset != null) name.text = preset!.wheelName(position);
+                  });
+                },
+              ),
+              const SizedBox(height: 14),
               if (equipment != null) ...[
                 Note(
                   '${equipment!.summary}\nReplacement rims fitted around ${equipment!.replacementYearApprox}. Spoke build and rim variant need confirmation.',
@@ -379,6 +380,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
                               ? spec
                               : original.right,
                           equipment: equipment,
+                          position: wheelPosition,
                         );
                         final ok = await widget.controller.saveWheel(wheel);
                         if (!context.mounted) {

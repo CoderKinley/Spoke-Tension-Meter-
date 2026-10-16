@@ -110,6 +110,17 @@ class MeasureTensionReadout extends StatelessWidget {
                     : 'Edit spoke profile',
               ),
             ),
+            if (settings != null)
+              TextButton(
+                onPressed: controller.saving
+                    ? null
+                    : controller.disableIdealString,
+                child: const Text('Return to frequency only'),
+              ),
+            const Text(
+              'Unvalidated model. Do not adjust spokes or decide wheel safety from this estimate alone.',
+              style: TextStyle(color: amber, fontSize: 12, height: 1.5),
+            ),
           ],
         ],
       ),
@@ -149,80 +160,6 @@ class KonaFactoryReference extends StatelessWidget {
       ),
     ],
   );
-}
-
-class KonaTensionPanel extends StatelessWidget {
-  const KonaTensionPanel({super.key, required this.controller});
-  final LabController controller;
-  @override
-  Widget build(BuildContext context) {
-    final settings = controller.idealSettings;
-    final estimate = controller.idealEstimate;
-    return LabCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Tag('UNVALIDATED IDEAL-STRING MODEL', color: amber),
-          const SizedBox(height: 16),
-          const Text('Experimental tension', style: TextStyle(fontSize: 24)),
-          const SizedBox(height: 12),
-          if (settings != null)
-            Text(
-              'Applied to this side: ${settings.lengthMm.toStringAsFixed(1)} mm vibrating length · assumed uniform 2.0 mm steel · 7850 kg/m³',
-              style: const TextStyle(color: muted, height: 1.5),
-            ),
-          if (estimate != null) ...[
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 16,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  '≈ ${estimate.newtons.toStringAsFixed(0)} N',
-                  key: const Key('ideal-tension-newtons'),
-                  style: const TextStyle(color: amber, fontSize: 32),
-                ),
-                Text(
-                  '≈ ${(estimate.newtons / TensionMath.newtonsPerKgf).toStringAsFixed(1)} kgf',
-                  style: const TextStyle(color: amber, fontSize: 20),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Calculated from ${estimate.frequencyHz.toStringAsFixed(1)} Hz; accuracy is unknown.',
-              style: const TextStyle(color: muted),
-            ),
-          ] else ...[
-            const SizedBox(height: 12),
-            Note(controller.idealEstimateIssue ?? 'Waiting for readings.'),
-          ],
-          const SizedBox(height: 16),
-          const Note(
-            'This is an ideal-string calculation, not a mechanical measurement or a Kona tension target. Do not adjust spokes or decide wheel safety from this number alone.',
-            color: amber,
-          ),
-          const SizedBox(height: 16),
-          OutlinedButton(
-            key: const Key('configure-ideal-model'),
-            onPressed: controller.saving
-                ? null
-                : () => showIdealStringDialog(context, controller),
-            child: const Text('Set length & assumptions'),
-          ),
-          if (settings != null)
-            TextButton(
-              onPressed: controller.saving
-                  ? null
-                  : controller.disableIdealString,
-              child: const Text('Return to frequency only'),
-            ),
-          const KonaFactoryReference(),
-        ],
-      ),
-    );
-  }
 }
 
 class _IdealStringDialog extends StatefulWidget {

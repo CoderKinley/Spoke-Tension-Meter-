@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../core/dsp/pitch_analyzer.dart';
 import '../core/physics/tension.dart';
 import '../data/models.dart';
 import '../data/wheel_presets.dart';
+import '../core/audio/capture_sensitivity.dart';
 import '../features/profile_editor.dart';
 import '../features/kona_reference.dart';
+import '../features/measure_dashboard.dart';
+import '../features/spoke_details.dart';
 import 'lab_controller.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -61,6 +63,7 @@ class _LabHomeState extends State<LabHome> {
   Future<void> editProfile({
     bool create = false,
     bool konaPreset = false,
+    String? position,
   }) async {
     await c.stop(discard: true);
     if (!mounted) {
@@ -74,9 +77,156 @@ class _LabHomeState extends State<LabHome> {
         controller: c,
         create: create,
         initialPreset: konaPreset ? konaProcess165Ar35 : null,
+        initialPosition: position,
       ),
     );
   }
+
+  Future<void> chooseWheelPosition(String position) async {
+    if (c.wheel.wheelPosition == position) return;
+    final presetId = c.wheel.equipment?.presetId;
+    final candidates = c.data.wheels
+        .where(
+          (wheel) =>
+              wheel.wheelPosition == position &&
+              wheel.equipment?.presetId == presetId,
+        )
+        .toList();
+    if (candidates.length == 1) {
+      await c.select(selectedWheel: candidates.single.id);
+    } else if (candidates.isEmpty) {
+      await editProfile(
+        create: true,
+        konaPreset: c.hasKonaReference,
+        position: position,
+      );
+    } else {
+      await openPage(
+        'Choose $position wheel',
+        () => candidates
+            .map(
+              (wheel) => ListTile(
+                title: Text(wheel.name),
+                onTap: () async {
+                  await c.select(selectedWheel: wheel.id);
+                  if (mounted) Navigator.pop(context);
+                },
+              ),
+            )
+            .toList(),
+      );
+    }
+  }
+
+  Future<void> openPage(String title, List<Widget> Function() contents) async {
+    await c.stop();
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ListenableBuilder(
+          listenable: c,
+          builder: (context, _) => Scaffold(
+            appBar: AppBar(title: Text(title)),
+            body: SafeArea(
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: contents(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> openSpoke(int index) async {
+    await c.stop();
+    if (!mounted) return;
+    final configuration = c.fingerprint;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SpokeDetailsPage(
+          wheel: c.wheel,
+          side: c.side,
+          index: index,
+          readings: c.readingsForSpoke(index),
+          onMeasure: () {
+            if (configuration == c.fingerprint) c.selectSpoke(index);
+            Navigator.pop(context);
+          },
+          onTensionSetup: () {
+            Navigator.pop(context);
+            setState(() => tab = 4);
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> saveAndNext() async {
+    final completed = c.spokeIndex == c.wheel.spokeCount ~/ 2;
+    if (await c.saveReading(continueListening: true)) {
+      toast(
+        completed
+            ? 'Side recorded. You can review any spoke on the map.'
+            : 'Spoke saved. Pluck the next selected spoke.',
+      );
+    }
+  }
+
+  List<Widget> tension() => [
+    const PageHeading(
+      'Model assumptions',
+      'Tension, separately.',
+      'Measurements stay on the wheel map. Model settings and estimates live here.',
+    ),
+    contextSelector(),
+    const SizedBox(height: 16),
+    MeasureTensionReadout(
+      controller: c,
+      onSetupWheel: setupKonaWheel,
+      onEditProfile: () => editProfile(),
+    ),
+    if (c.hasKonaReference) const KonaFactoryReference(),
+    const SizedBox(height: 20),
+    const Note(
+      'Saved spoke details show the estimate and assumptions that were attached when that reading was saved. Short decays and unconfirmed fundamentals remain frequency-only.',
+      color: amber,
+    ),
+  ];
+
+  List<Widget> captureSettings() => [
+    const PageHeading(
+      'Audio',
+      'Capture settings',
+      'Sensitivity affects repeated-pluck capture. Live frequency stays available for quiet tones.',
+    ),
+    DropdownButtonFormField<CaptureSensitivity>(
+      initialValue: c.sensitivity,
+      decoration: const InputDecoration(
+        labelText: 'Repeat capture sensitivity',
+      ),
+      items: CaptureSensitivity.values
+          .map(
+            (value) => DropdownMenuItem(value: value, child: Text(value.label)),
+          )
+          .toList(),
+      onChanged: (value) {
+        if (value != null) c.setSensitivity(value);
+      },
+    ),
+    const SizedBox(height: 24),
+    SpectrumView(c.livePitch?.spectrum ?? c.latest?.spectrum ?? const []),
+    const SizedBox(height: 16),
+    SelectableText(
+      c.captureSource,
+      style: const TextStyle(color: muted, fontSize: 12),
+    ),
+    const SizedBox(height: 20),
+    const Note(
+      'Waveform scaling makes quiet input visible. The microphone meter reports digital input, not sound pressure. A stable pitch is a repeatability check, not a wheel-safety assessment.',
+    ),
+  ];
 
   Future<void> setupKonaWheel() async {
     final existing = c.data.wheels
@@ -286,24 +436,71 @@ class _LabHomeState extends State<LabHome> {
     listenable: c,
     builder: (context, _) => Scaffold(
       appBar: AppBar(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.radar, color: mint, size: 28),
-            SizedBox(width: 10),
+            const Icon(Icons.radar, color: accent, size: 28),
+            const SizedBox(width: 10),
             Flexible(
-              child: Text(
-                'spoke lab',
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -.7,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'spoke lab',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -.7,
+                    ),
+                  ),
+                  Text(
+                    c.wheel.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 10, color: muted),
+                  ),
+                ],
               ),
             ),
           ],
         ),
         actions: [
+          PopupMenuButton<String>(
+            key: const Key('workshop-menu'),
+            tooltip: 'Wheel setup and tools',
+            icon: const Icon(Icons.more_horiz),
+            onSelected: (value) {
+              switch (value) {
+                case 'wheels':
+                  unawaited(c.stop());
+                  setState(() => tab = 2);
+                case 'kona':
+                  unawaited(editProfile(create: true, konaPreset: true));
+                case 'tension':
+                  unawaited(c.stop());
+                  setState(() => tab = 4);
+                case 'references':
+                  unawaited(openPage('References', tune));
+                case 'calibration':
+                  unawaited(openPage('Calibration', calibration));
+                case 'audio':
+                  unawaited(openPage('Capture settings', captureSettings));
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'wheels', child: Text('Wheel profiles')),
+              PopupMenuItem(value: 'kona', child: Text('Add Kona preset')),
+              PopupMenuItem(value: 'tension', child: Text('Tension setup')),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'references',
+                child: Text('Sound references'),
+              ),
+              PopupMenuItem(value: 'calibration', child: Text('Calibration')),
+              PopupMenuItem(value: 'audio', child: Text('Capture settings')),
+            ],
+          ),
           IconButton(
             tooltip: 'Measurement guide',
             onPressed: () => showDialog<void>(
@@ -312,7 +509,7 @@ class _LabHomeState extends State<LabHome> {
                 title: const Text('A good measurement starts here'),
                 content: const SingleChildScrollView(
                   child: Text(
-                    '1. Keep the wheel stationary and unloaded. Record the tire state.\n\n'
+                    '1. Keep the wheel stationary and unloaded. Number spokes clockwise from the valve, viewed from the selected side. Record the tire state.\n\n'
                     '2. Start in a quiet room. Hold the phone near the spoke without touching it.\n\n'
                     '3. Wait for background-noise measurement. Gently pluck the same spoke and let it ring. Repeat three times to save, or five times for a reference.\n\n'
                     '4. Touching spokes may sound as a pair. Record the contact arrangement in the profile.\n\n'
@@ -339,6 +536,18 @@ class _LabHomeState extends State<LabHome> {
                   child: Text(c.error ?? 'Opening your workshop…'),
                 ),
               )
+            : tab == 0
+            ? Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: MeasureDashboard(
+                    controller: c,
+                    onPosition: chooseWheelPosition,
+                    onSpoke: openSpoke,
+                    onSave: saveAndNext,
+                  ),
+                ),
+              )
             : Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 720),
@@ -353,10 +562,8 @@ class _LabHomeState extends State<LabHome> {
                           const SizedBox(height: 16),
                         ],
                         ...switch (tab) {
-                          0 => measure(),
-                          1 => tune(),
                           2 => wheels(),
-                          _ => calibration(),
+                          _ => tension(),
                         },
                       ],
                     ),
@@ -364,24 +571,44 @@ class _LabHomeState extends State<LabHome> {
                 ),
               ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (i) {
-          if (i >= 2) {
-            unawaited(c.stop());
-          }
-          setState(() => tab = i);
-        },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.graphic_eq), label: 'Measure'),
-          NavigationDestination(icon: Icon(Icons.tune), label: 'Tune'),
-          NavigationDestination(icon: Icon(Icons.trip_origin), label: 'Wheels'),
-          NavigationDestination(
-            icon: Icon(Icons.science_outlined),
-            label: 'Calibration',
-          ),
-        ],
-      ),
+      bottomNavigationBar:
+          tab == 0 &&
+              MediaQuery.sizeOf(context).width >
+                  MediaQuery.sizeOf(context).height
+          ? null
+          : NavigationBar(
+              selectedIndex: tab == 0
+                  ? 0
+                  : tab == 2
+                  ? 1
+                  : 2,
+              onDestinationSelected: (i) {
+                if (i != 0) {
+                  unawaited(c.stop());
+                }
+                setState(
+                  () => tab = i == 0
+                      ? 0
+                      : i == 1
+                      ? 2
+                      : 4,
+                );
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.graphic_eq),
+                  label: 'Measure',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.trip_origin),
+                  label: 'Wheels',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.science_outlined),
+                  label: 'Tension',
+                ),
+              ],
+            ),
     ),
   );
 
@@ -476,178 +703,8 @@ class _LabHomeState extends State<LabHome> {
     ),
   );
 
-  List<Widget> measure() => [
-    const PageHeading(
-      'Your pocket workshop',
-      'Listen to your wheel.',
-      'Measure a spoke’s resonance. Build a repeatable picture, one pluck at a time.',
-    ),
-    contextSelector(),
-    const SizedBox(height: 16),
-    LabCard(
-      child: Column(
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              Tag(c.listening ? 'MICROPHONE ON' : 'FREQUENCY MODE'),
-              Text(
-                '${c.pluckCount}/3 plucks',
-                style: const TextStyle(color: muted, fontSize: 12),
-              ),
-            ],
-          ),
-          const SizedBox(height: 26),
-          Text(
-            c.processing
-                ? 'ANALYSING'
-                : c.latest?.kind == PitchKind.spectralPeak
-                ? 'SPECTRAL PEAK'
-                : 'RESONANCE',
-            style: const TextStyle(
-              color: muted,
-              letterSpacing: 2,
-              fontSize: 11,
-            ),
-          ),
-          const SizedBox(height: 6),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(
-                  c.frequencyHz?.toStringAsFixed(1) ?? '—',
-                  key: const Key('frequency-value'),
-                  style: const TextStyle(
-                    fontSize: 76,
-                    fontWeight: FontWeight.w300,
-                    letterSpacing: -3,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Text('Hz', style: TextStyle(fontSize: 22, color: mint)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            c.status,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: muted, fontSize: 13, height: 1.5),
-          ),
-          const SizedBox(height: 16),
-          MeasureTensionReadout(
-            controller: c,
-            onSetupWheel: setupKonaWheel,
-            onEditProfile: () => editProfile(),
-          ),
-          const SizedBox(height: 24),
-          ValueListenableBuilder<List<double>>(
-            valueListenable: c.waveform,
-            builder: (context, samples, _) => AudioWave(samples),
-          ),
-          const SizedBox(height: 12),
-          SpectrumView(c.latest?.spectrum ?? const []),
-          const SizedBox(height: 24),
-          SizedBox(width: double.infinity, child: captureButton()),
-          if (c.pluckCount > 0) ...[
-            const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 12,
-              children: [
-                Text(
-                  'Spread ${c.spreadPercent.toStringAsFixed(2)}%',
-                  style: const TextStyle(color: muted, fontSize: 12),
-                ),
-                TextButton(
-                  onPressed: c.processing ? null : c.resetPlucks,
-                  child: const Text('Reset plucks'),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    ),
-    const SizedBox(height: 16),
-    if (c.hasKonaReference) ...[
-      KonaTensionPanel(controller: c),
-      const SizedBox(height: 16),
-    ],
-    LabCard(
-      padding: 18,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.bookmark_outline, color: mint),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Position ${c.spokeIndex} · ${c.side.name} side',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Previous position',
-                onPressed: () => c.select(
-                  index: c.spokeIndex == 1
-                      ? c.wheel.spokeCount ~/ 2
-                      : c.spokeIndex - 1,
-                ),
-                icon: const Icon(Icons.chevron_left),
-              ),
-              IconButton(
-                tooltip: 'Next position',
-                onPressed: () => c.select(
-                  index: c.spokeIndex % (c.wheel.spokeCount ~/ 2) + 1,
-                ),
-                icon: const Icon(Icons.chevron_right),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              key: const Key('save-reading'),
-              onPressed: c.canSave
-                  ? () async {
-                      if (await c.saveReading()) {
-                        toast('Reading saved. Ready for the next position.');
-                      }
-                    }
-                  : null,
-              icon: const Icon(Icons.add),
-              label: const Text('Save reading & next'),
-            ),
-          ),
-        ],
-      ),
-    ),
-    const SizedBox(height: 20),
-    const Note(
-      'There is no universal target Hz. Start with the wheel unchanged, let each pluck decay, and compare repeated readings on the same side. The analyser covers roughly 80–2500 Hz; this is a detection range, not a tuning target.',
-    ),
-    const SizedBox(height: 12),
-    const Note(
-      'Validated tension measurements are unavailable. Experimental calculations use stated assumptions; frequency repeatability is not tension accuracy.',
-      color: amber,
-      icon: Icons.science_outlined,
-    ),
-    const SizedBox(height: 12),
-    Text(c.captureSource, style: const TextStyle(color: muted, fontSize: 11)),
-  ];
-
   List<Widget> tune() {
-    final ref = c.reference, hz = c.frequencyHz;
+    final ref = c.reference, hz = c.displayFrequencyHz;
     final cents = ref != null && hz != null
         ? TensionMath.cents(hz, ref.frequencyHz)
         : null;
@@ -676,7 +733,7 @@ class _LabHomeState extends State<LabHome> {
                   : '${ref.frequencyHz.toStringAsFixed(1)} Hz',
               style: TextStyle(
                 fontSize: ref == null ? 14 : 40,
-                color: ref == null ? muted : mint,
+                color: ref == null ? muted : accent,
               ),
             ),
             if (ref != null) ...[
@@ -724,7 +781,7 @@ class _LabHomeState extends State<LabHome> {
               cents == null
                   ? 'Your live comparison appears here.'
                   : '${cents >= 0 ? '+' : ''}${cents.toStringAsFixed(1)} cents',
-              style: const TextStyle(color: mint, fontSize: 24),
+              style: const TextStyle(color: accent, fontSize: 24),
             ),
             if (cents != null) ...[
               const SizedBox(height: 6),
@@ -772,10 +829,7 @@ class _LabHomeState extends State<LabHome> {
   }
 
   List<Widget> wheels() {
-    final readings = c.sessionReadings;
-    final byIndex = <int, SpokeReading>{
-      for (final r in readings) r.spokeIndex: r,
-    };
+    final byIndex = c.mappedReadings;
     return [
       const PageHeading(
         'Keep the whole picture',
@@ -798,7 +852,7 @@ class _LabHomeState extends State<LabHome> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Current session · ${c.side.name} · ${c.wheel.tireState}',
+              'Latest saved · ${c.side.name} · ${c.wheel.tireState}',
               style: const TextStyle(color: muted),
             ),
             const SizedBox(height: 16),
@@ -829,7 +883,7 @@ class _LabHomeState extends State<LabHome> {
       if (byIndex.isEmpty)
         const LabCard(
           child: Note(
-            'No readings in this session yet. Measure a position three times, then save it.',
+            'No saved readings for this configuration yet. Measure a position three times, then save it.',
           ),
         )
       else
@@ -841,7 +895,7 @@ class _LabHomeState extends State<LabHome> {
               return ListTile(
                 leading: CircleAvatar(
                   backgroundColor: ink,
-                  child: Text('$index', style: const TextStyle(color: mint)),
+                  child: Text('$index', style: const TextStyle(color: accent)),
                 ),
                 title: Text('${r.frequencyHz.toStringAsFixed(1)} Hz'),
                 subtitle: Text('${r.plucks} plucks · ${r.mode}'),

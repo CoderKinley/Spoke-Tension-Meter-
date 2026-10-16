@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../core/audio/audio_source.dart';
+import '../core/audio/capture_sensitivity.dart';
 import '../core/dsp/pitch_analyzer.dart';
+import '../core/dsp/live_pitch.dart';
 import '../core/physics/tension.dart';
 import '../data/models.dart';
 import '../data/repository.dart';
@@ -27,8 +29,58 @@ class LabController extends ChangeNotifier {
   WheelSide side = WheelSide.left;
   int spokeIndex = 1;
   PitchResult? latest;
+  PitchResult? livePitch;
+  CaptureSensitivity sensitivity = CaptureSensitivity.sensitive;
+  final inputLevelDb = ValueNotifier<double>(-100);
+  final List<double> _liveSamples = [];
+  bool _liveProcessing = false;
+  bool _awaitingSpokeQuiet = false;
+  int _liveSinceAnalysis = 0;
+  Timer? _liveExpiry;
+  double? _comparisonHz;
+  String? _comparisonFingerprint;
+  PitchKind? _comparisonKind;
+  double? get displayFrequencyHz =>
+      hasSettledFrequency ? frequencyHz : livePitch?.frequencyHz ?? frequencyHz;
+  PitchKind? get displayKind =>
+      hasSettledFrequency ? latest?.kind : livePitch?.kind ?? latest?.kind;
+  bool get hasSettledFrequency =>
+      _plucks.length >= 3 && spreadPercent <= 1.5 && latest?.accepted == true;
+  double? get comparisonHz =>
+      _comparisonFingerprint == fingerprint ? _comparisonHz : null;
+  bool get comparisonCompatible =>
+      comparisonHz != null && displayKind == _comparisonKind;
+  double? get comparisonCents =>
+      comparisonCompatible && displayFrequencyHz != null
+      ? TensionMath.cents(displayFrequencyHz!, comparisonHz!)
+      : null;
+  double get onsetThreshold =>
+      math.max(sensitivity.minimumRms, _noise * sensitivity.noiseMultiplier);
+  void setSensitivity(CaptureSensitivity value) {
+    sensitivity = value;
+    _notify();
+  }
+
+  bool pinComparison() {
+    final hz = displayFrequencyHz;
+    if (hz == null) return false;
+    _comparisonHz = hz;
+    _comparisonFingerprint = fingerprint;
+    _comparisonKind = displayKind;
+    _notify();
+    return true;
+  }
+
+  void clearComparison() {
+    _comparisonHz = null;
+    _comparisonFingerprint = null;
+    _comparisonKind = null;
+    _notify();
+  }
+
   final waveform = ValueNotifier<List<double>>(const []);
   final List<double> _plucks = [];
+  bool _frequencyOnlySet = false;
   StreamSubscription<AudioPacket>? _subscription;
   final List<double> _capture = [];
   int _generation = 0,
@@ -36,7 +88,7 @@ class LabController extends ChangeNotifier {
       _lastSequence = -1,
       _rate = 0,
       _quiet = 0;
-  double _noise = .001;
+  double _noise = .00001;
   bool _armed = true, _disposed = false;
   int get pluckCount => _plucks.length;
   WheelProfile get wheel => data.wheels.firstWhere(
@@ -45,7 +97,7 @@ class LabController extends ChangeNotifier {
   );
   String get fingerprint => wheel.fingerprint(side);
   double? get frequencyHz {
-    if (_plucks.isEmpty || processing) {
+    if (_plucks.isEmpty) {
       return null;
     }
     final ordered = List<double>.from(_plucks)..sort();
@@ -168,6 +220,33 @@ class LabController extends ChangeNotifier {
             r.fingerprint == fingerprint,
       )
       .toList();
+  List<SpokeReading> readingsForSpoke(int index) =>
+      data.readings
+          .where(
+            (r) =>
+                r.wheelId == wheel.id &&
+                r.side == side &&
+                r.fingerprint == fingerprint &&
+                r.spokeIndex == index,
+          )
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  Map<int, SpokeReading> get mappedReadings {
+    final result = <int, SpokeReading>{};
+    for (final reading in data.readings) {
+      if (reading.wheelId != wheel.id ||
+          reading.side != side ||
+          reading.fingerprint != fingerprint) {
+        continue;
+      }
+      final previous = result[reading.spokeIndex];
+      if (previous == null || reading.createdAt.isAfter(previous.createdAt)) {
+        result[reading.spokeIndex] = reading;
+      }
+    }
+    return result;
+  }
+
   List<CalibrationPoint> get calibrationPoints =>
       data.calibration.where((p) => p.fingerprint == fingerprint).toList();
 
@@ -189,6 +268,13 @@ class LabController extends ChangeNotifier {
     try {
       data = await repository.load();
       wheelId = data.wheels.first.id;
+      final previous = data.readings.lastOrNull;
+      if (previous != null &&
+          data.wheels.any((w) => w.id == previous.wheelId)) {
+        wheelId = previous.wheelId;
+        side = previous.side;
+        spokeIndex = previous.spokeIndex % (wheel.spokeCount ~/ 2) + 1;
+      }
       loaded = true;
     } catch (e) {
       error = 'Saved data could not be read. It has been preserved. $e';
@@ -208,8 +294,10 @@ class LabController extends ChangeNotifier {
     _warmupSamples = 0;
     _lastSequence = -1;
     _rate = 0;
-    _noise = .001;
+    _noise = .00001;
     _armed = true;
+    _awaitingSpokeQuiet = false;
+    _quiet = 0;
     _notify();
     try {
       _subscription = audio.packets.listen(
@@ -242,7 +330,12 @@ class LabController extends ChangeNotifier {
     listening = false;
     starting = false;
     processing = false;
+    _liveProcessing = false;
+    _liveSamples.clear();
+    _liveSinceAnalysis = 0;
+    _liveExpiry?.cancel();
     if (!_disposed) waveform.value = const [];
+    if (!_disposed) inputLevelDb.value = -100;
     _capture.clear();
     final subscription = _subscription;
     _subscription = null;
@@ -271,9 +364,16 @@ class LabController extends ChangeNotifier {
   }
 
   void resetPlucks() {
+    ++_generation;
+    _liveProcessing = false;
     _plucks.clear();
+    _frequencyOnlySet = false;
     _capture.clear();
     latest = null;
+    livePitch = null;
+    _liveExpiry?.cancel();
+    _liveSamples.clear();
+    _liveSinceAnalysis = 0;
     processing = false;
     status = listening
         ? 'Pluck the same spoke at least three times.'
@@ -308,17 +408,35 @@ class LabController extends ChangeNotifier {
     if (samples.isEmpty) {
       return;
     }
-    final count = math.min(128, samples.length);
-    waveform.value = List<double>.generate(
-      count,
-      (i) => samples[i * samples.length ~/ count],
-      growable: false,
-    );
     final rms = math.sqrt(
       samples.fold<double>(0, (s, x) => s + x * x) / samples.length,
     );
-    if (_warmupSamples < packet.sampleRate * .3) {
-      _noise = .7 * _noise + .3 * rms;
+    inputLevelDb.value = (20 * math.log(math.max(rms, .00001)) / math.ln10)
+        .clamp(-100, 0);
+    final count = math.min(128, samples.length);
+    final peak = samples.fold<double>(0, (s, x) => math.max(s, x.abs()));
+    final displayGain = (.6 / math.max(peak, .003)).clamp(1.0, 200.0);
+    waveform.value = List<double>.generate(
+      count,
+      (i) =>
+          (samples[i * samples.length ~/ count] * displayGain).clamp(-1.0, 1.0),
+      growable: false,
+    );
+    if (_awaitingSpokeQuiet) {
+      _quiet = rms < math.max(sensitivity.minimumRms * .7, _noise * 1.4)
+          ? _quiet + samples.length
+          : 0;
+      if (_quiet >= packet.sampleRate * .08) {
+        _awaitingSpokeQuiet = false;
+        _armed = true;
+        _quiet = 0;
+      }
+      return;
+    }
+    _receiveLive(samples, packet.sampleRate);
+    if (_warmupSamples < packet.sampleRate * .2) {
+      // A tap during warmup must not set the room's noise floor to its peak.
+      _noise = _warmupSamples == 0 ? rms : math.min(_noise, rms);
       _warmupSamples += samples.length;
       status = 'Measuring background noise…';
       _notify();
@@ -328,14 +446,16 @@ class LabController extends ChangeNotifier {
       return;
     }
     if (!_armed && _capture.isEmpty) {
-      _quiet = rms < math.max(.003, _noise * 2) ? _quiet + 1 : 0;
-      if (_quiet >= 3) {
+      _quiet = rms < math.max(sensitivity.minimumRms * .7, _noise * 1.4)
+          ? _quiet + samples.length
+          : 0;
+      if (_quiet >= packet.sampleRate * .08) {
         _armed = true;
         _quiet = 0;
       }
       return;
     }
-    if (_capture.isNotEmpty || (_armed && rms > math.max(.006, _noise * 4))) {
+    if (_capture.isNotEmpty || (_armed && rms > onsetThreshold)) {
       _capture.addAll(samples);
       _armed = false;
       if (_capture.length >= 16896) {
@@ -345,7 +465,7 @@ class LabController extends ChangeNotifier {
         status = 'Checking resonance…';
         _notify();
         final token = _generation, rate = packet.sampleRate;
-        compute(analyzePluckRequest, (signal, rate))
+        compute(analyzeMappingPluckRequest, (signal, rate))
             .then((result) {
               if (!_disposed && listening && token == _generation) {
                 processing = false;
@@ -367,6 +487,46 @@ class LabController extends ChangeNotifier {
     }
   }
 
+  void _receiveLive(List<double> samples, int rate) {
+    _liveSamples.addAll(samples);
+    if (_liveSamples.length > 8192) {
+      _liveSamples.removeRange(0, _liveSamples.length - 8192);
+    }
+    _liveSinceAnalysis += samples.length;
+    if (_liveProcessing ||
+        _liveSamples.length < 8192 ||
+        _liveSinceAnalysis < 4096) {
+      return;
+    }
+    _liveProcessing = true;
+    _liveSinceAnalysis = 0;
+    final token = _generation;
+    compute(analyzeLiveRequest, (List<double>.from(_liveSamples), rate))
+        .then((result) {
+          if (_disposed || !listening || token != _generation) return;
+          _liveProcessing = false;
+          if (result.accepted) {
+            livePitch = result;
+            _liveExpiry?.cancel();
+            _liveExpiry = Timer(const Duration(milliseconds: 1500), () {
+              if (!_disposed && listening && token == _generation) {
+                livePitch = null;
+                _notify();
+              }
+            });
+            _notify();
+          }
+          // Coalesce queued packets into the newest frame; never build a backlog.
+          if (_liveSinceAnalysis >= 4096) _receiveLive(const [], rate);
+        })
+        .catchError((Object e) {
+          if (!_disposed && token == _generation) {
+            _liveProcessing = false;
+            unawaited(_audioError(e));
+          }
+        });
+  }
+
   @visibleForTesting
   void acceptAnalysis(PitchResult result) {
     final oldKind = latest?.kind;
@@ -374,12 +534,28 @@ class LabController extends ChangeNotifier {
     status = result.message;
     if (!result.accepted) {
       _plucks.clear();
+      _frequencyOnlySet = false;
       _notify();
       return;
     }
     if (oldKind != null && oldKind != result.kind && _plucks.isNotEmpty) {
-      _plucks.clear();
-      status = 'Mode changed. Start a fresh repeat set.';
+      if ((result.frequencyHz! / frequencyHz! - 1).abs() > .015) {
+        _plucks.clear();
+        _frequencyOnlySet = false;
+        status = 'Mode changed. Start a fresh repeat set.';
+      }
+    }
+    _frequencyOnlySet =
+        _frequencyOnlySet || result.kind == PitchKind.spectralPeak;
+    if (_frequencyOnlySet && result.kind == PitchKind.fundamental) {
+      latest = PitchResult(
+        kind: PitchKind.spectralPeak,
+        frequencyHz: result.frequencyHz,
+        message:
+            'Consistent frequency; this repeat set includes an unconfirmed fundamental.',
+        spectrum: result.spectrum,
+        rms: result.rms,
+      );
     }
     _plucks.add(result.frequencyHz!);
     if (_plucks.length > 10) {
@@ -412,6 +588,16 @@ class LabController extends ChangeNotifier {
     _notify();
   }
 
+  void selectSpoke(int index) {
+    if (saving || starting) return;
+    resetPlucks();
+    spokeIndex = index.clamp(1, wheel.spokeCount ~/ 2);
+    _awaitingSpokeQuiet = listening;
+    _armed = !listening;
+    _quiet = 0;
+    _notify();
+  }
+
   Future<bool> _persist(AppData updated) async {
     if (saving || !loaded) {
       return false;
@@ -432,7 +618,7 @@ class LabController extends ChangeNotifier {
     }
   }
 
-  Future<bool> saveReading() async {
+  Future<bool> saveReading({bool continueListening = false}) async {
     if (!canSave) {
       return false;
     }
@@ -456,8 +642,13 @@ class LabController extends ChangeNotifier {
       data.copyWith(readings: [...data.readings, reading]),
     );
     if (success) {
-      await stop(discard: true);
-      spokeIndex = spokeIndex % (wheel.spokeCount ~/ 2) + 1;
+      final next = spokeIndex % (wheel.spokeCount ~/ 2) + 1;
+      if (continueListening) {
+        selectSpoke(next);
+      } else {
+        await stop(discard: true);
+        spokeIndex = next;
+      }
       _notify();
     }
     return success;
@@ -554,6 +745,8 @@ class LabController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _liveExpiry?.cancel();
+    inputLevelDb.dispose();
     waveform.dispose();
     _generation++;
     listening = false;

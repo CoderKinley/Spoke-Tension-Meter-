@@ -95,11 +95,14 @@ class WheelProfile {
     this.left = const SpokeSpec(),
     this.right = const SpokeSpec(),
     this.equipment,
+    this.position,
   });
   final String id, name, tireState;
   final int spokeCount;
   final SpokeSpec left, right;
   final WheelEquipment? equipment;
+  final String? position;
+  String? get wheelPosition => equipment?.position ?? position;
   SpokeSpec spec(WheelSide side) => side == WheelSide.left ? left : right;
   String fingerprint(WheelSide side) => jsonEncode({
     'wheel': id,
@@ -108,6 +111,7 @@ class WheelProfile {
     'tireState': tireState,
     'spec': spec(side).toJson(),
     if (equipment != null) 'equipment': equipment!.toJson(),
+    if (equipment == null && position != null) 'position': position,
     'protocol': 'stationary-unloaded-gentle-pluck-v1',
   });
   Map<String, dynamic> toJson() => {
@@ -118,6 +122,7 @@ class WheelProfile {
     'left': left.toJson(),
     'right': right.toJson(),
     if (equipment != null) 'equipment': equipment!.toJson(),
+    if (position != null) 'position': position,
   };
   factory WheelProfile.fromJson(Map<String, dynamic> j) => WheelProfile(
     id: j['id'] as String,
@@ -129,6 +134,12 @@ class WheelProfile {
     equipment: j['equipment'] == null
         ? null
         : WheelEquipment.fromJson(j['equipment'] as Map<String, dynamic>),
+    position: switch (j['position']) {
+      null => null,
+      'front' => 'front',
+      'rear' => 'rear',
+      _ => throw const FormatException('Invalid wheel position'),
+    },
   );
 }
 

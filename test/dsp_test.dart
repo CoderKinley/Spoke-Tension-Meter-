@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spoke_lab/core/dsp/pitch_analyzer.dart';
+import 'package:spoke_lab/core/dsp/live_pitch.dart';
 
 List<double> signal(
   double hz, {
@@ -17,6 +18,66 @@ List<double> signal(
 });
 
 void main() {
+  test('short clean plucks can map frequency without force confirmation', () {
+    final samples = signal(
+      350,
+      count: 16384,
+      decay: 30,
+      harmonics: [.005, .0025, .0012],
+    );
+    expect(analyzePluck(samples, 48000).accepted, isFalse);
+    final mapped = analyzeMappingPluckRequest((samples, 48000));
+    expect(mapped.kind, PitchKind.spectralPeak, reason: mapped.message);
+    expect(mapped.frequencyHz, closeTo(350, 3.5));
+    expect(
+      analyzeMappingPluckRequest((
+        [...signal(350), ...signal(440)],
+        48000,
+      )).accepted,
+      isFalse,
+    );
+  });
+  for (final rate in [44100, 48000]) {
+    test('quiet PCM16 harmonic pluck has a live frequency at $rate Hz', () {
+      final random = math.Random(10);
+      final input =
+          signal(350, rate: rate, harmonics: [.0006, .0003, .00015], decay: 12)
+              .map(
+                (v) =>
+                    ((v + (random.nextDouble() - .5) * .00004) * 32768)
+                        .round() /
+                    32768,
+              )
+              .toList();
+      final result = analyzeLiveFrame(input, rate);
+      expect(result.accepted, isTrue, reason: result.message);
+      expect(result.frequencyHz, closeTo(350, 3.5));
+    });
+  }
+  test('live pitch covers 50–3000 Hz without extending the tension range', () {
+    for (final hz in [55.0, 2800.0]) {
+      final result = analyzeLiveFrame(signal(hz, harmonics: [.001]), 48000);
+      expect(result.kind, PitchKind.spectralPeak, reason: result.message);
+      expect(result.frequencyHz, closeTo(hz, 2));
+      expect(
+        PitchAnalyzer().analyze(signal(hz, harmonics: [.001]), 48000).accepted,
+        isFalse,
+      );
+    }
+  });
+  test('live analysis rejects quiet noise, clipping and unrelated tones', () {
+    final random = math.Random(94);
+    final a = signal(350, harmonics: [.001]);
+    final b = signal(467, harmonics: [.001]);
+    for (final input in [
+      List<double>.filled(8192, 0),
+      List.generate(8192, (_) => (random.nextDouble() - .5) * .001),
+      signal(350, harmonics: [1.5]),
+      List.generate(8192, (i) => a[i] + b[i]),
+    ]) {
+      expect(analyzeLiveFrame(input, 48000).accepted, isFalse);
+    }
+  });
   test('FFT agrees with independent DFT', () {
     final samples = [.2, .4, -.3, .1, .8, -.6, .2, 0.0];
     final spectrum = magnitudeSpectrum(samples);

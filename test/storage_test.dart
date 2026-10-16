@@ -7,6 +7,19 @@ import 'package:spoke_lab/data/wheel_presets.dart';
 import 'package:spoke_lab/core/physics/tension.dart';
 
 void main() {
+  test('custom wheel positions round-trip and scope their saved context', () {
+    const front = WheelProfile(id: 'custom', name: 'Custom', position: 'front');
+    const rear = WheelProfile(id: 'custom', name: 'Custom', position: 'rear');
+    expect(WheelProfile.fromJson(front.toJson()).wheelPosition, 'front');
+    expect(
+      front.fingerprint(WheelSide.left),
+      isNot(rear.fingerprint(WheelSide.left)),
+    );
+    expect(
+      () => WheelProfile.fromJson(front.toJson()..['position'] = 'other'),
+      throwsFormatException,
+    );
+  });
   test('legacy archives load without theoretical assumptions', () {
     final legacy = AppData.empty().toJson()..remove('idealStringSettings');
     expect(AppData.fromJson(legacy).idealSettings, isEmpty);
