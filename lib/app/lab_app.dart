@@ -8,6 +8,7 @@ import '../features/profile_editor.dart';
 import '../features/kona_reference.dart';
 import '../features/measure_dashboard.dart';
 import '../features/spoke_details.dart';
+import '../features/wheel_guide.dart';
 import 'lab_controller.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -116,6 +117,11 @@ class _LabHomeState extends State<LabHome> {
             .toList(),
       );
     }
+  }
+
+  void showGuide() {
+    unawaited(c.stop());
+    setState(() => tab = 6);
   }
 
   Future<void> openPage(String title, List<Widget> Function() contents) async {
@@ -486,6 +492,8 @@ class _LabHomeState extends State<LabHome> {
                   unawaited(openPage('Calibration', calibration));
                 case 'audio':
                   unawaited(openPage('Capture settings', captureSettings));
+                case 'guide':
+                  showGuide();
               }
             },
             itemBuilder: (_) => const [
@@ -499,31 +507,12 @@ class _LabHomeState extends State<LabHome> {
               ),
               PopupMenuItem(value: 'calibration', child: Text('Calibration')),
               PopupMenuItem(value: 'audio', child: Text('Capture settings')),
+              PopupMenuItem(value: 'guide', child: Text('Wheel guide')),
             ],
           ),
           IconButton(
-            tooltip: 'Measurement guide',
-            onPressed: () => showDialog<void>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('A good measurement starts here'),
-                content: const SingleChildScrollView(
-                  child: Text(
-                    '1. Keep the wheel stationary and unloaded. Number spokes clockwise from the valve, viewed from the selected side. Record the tire state.\n\n'
-                    '2. Start in a quiet room. Hold the phone near the spoke without touching it.\n\n'
-                    '3. Wait for background-noise measurement. Gently pluck the same spoke and let it ring. Repeat three times to save, or five times for a reference.\n\n'
-                    '4. Touching spokes may sound as a pair. Record the contact arrangement in the profile.\n\n'
-                    '5. Compare matching configurations on the same wheel side. A matching sound does not establish correct tension or wheel safety.',
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Got it'),
-                  ),
-                ],
-              ),
-            ),
+            tooltip: 'Wheel guide',
+            onPressed: showGuide,
             icon: const Icon(Icons.help_outline),
           ),
         ],
@@ -536,6 +525,8 @@ class _LabHomeState extends State<LabHome> {
                   child: Text(c.error ?? 'Opening your workshop…'),
                 ),
               )
+            : tab == 6
+            ? const WheelGuide()
             : tab == 0
             ? Center(
                 child: ConstrainedBox(
@@ -581,7 +572,9 @@ class _LabHomeState extends State<LabHome> {
                   ? 0
                   : tab == 2
                   ? 1
-                  : 2,
+                  : tab == 4
+                  ? 2
+                  : 3,
               onDestinationSelected: (i) {
                 if (i != 0) {
                   unawaited(c.stop());
@@ -591,7 +584,9 @@ class _LabHomeState extends State<LabHome> {
                       ? 0
                       : i == 1
                       ? 2
-                      : 4,
+                      : i == 2
+                      ? 4
+                      : 6,
                 );
               },
               destinations: const [
@@ -606,6 +601,10 @@ class _LabHomeState extends State<LabHome> {
                 NavigationDestination(
                   icon: Icon(Icons.science_outlined),
                   label: 'Tension',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.menu_book_outlined),
+                  label: 'Guide',
                 ),
               ],
             ),

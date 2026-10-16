@@ -17,12 +17,15 @@ the wheel map. Amber highlights the selected spoke and cautions.
 
 <img src="docs/previews/measure-landscape.png" alt="Landscape frequency and waveform beside the interactive wheel" width="700">
 
+<img src="docs/previews/guide-turns.png" alt="Illustrated guide showing nipple rotation from the selected viewpoint" width="300"> <img src="docs/previews/guide-radial.png" alt="Illustrated radial truing guide showing a high spot and correction direction" width="300">
+
 These previews render actual Flutter widgets with synthetic readings and host
 fonts. They are not phone captures or evidence of measurement accuracy. See the
 [complete screenshot gallery](docs/previews/README.md) and [theme research](docs/THEME.md).
 
 ## Features
 
+- **Illustrated Guide:** an offline workshop page for tire-versus-rim checks, viewpoint-dependent nipple rotation, lateral wobble, and radial high/low spots. Interactive diagrams share the current theme; access Guide from navigation, the help icon, or tools. See the [guide research](docs/WHEEL_GUIDE.md).
 - **Measure:** one fixed screen with frequency and waveform above an interactive numbered wheel. Repeated plucks settle to a median estimate; **Save & next** stores the selected spoke and advances while keeping the microphone open. Front/rear and left/right switches select independent maps. Tap a spoke to inspect its history or measure it again. See the [wheel-mapping workflow](docs/WHEEL_MAPPING.md).
 - **Sound references:** under the top-right tools menu, save five consistent plucks or enter a target frequency; compare Hz, percentage and cents within the same wheel-side configuration.
 - **Wheels:** front/rear profiles for material, round/butted/bladed dimensions, contact arrangement and tire state; persistent indexed readings, sessions, history and CSV/JSON export. Preset selection and editing live here and in the tools menu.
@@ -75,7 +78,7 @@ This fallback uses test framework internals, supports the current tests, and doe
 
 ## Verification status
 
-- **65 unit/widget tests pass**, covering DSP, persistence, microphone lifecycle, wheel mapping, and compact/large-text/landscape layouts.
+- **70 unit/widget tests pass**, covering DSP, persistence, microphone lifecycle, wheel mapping, and compact/large-text/landscape layouts.
 - Static analysis is clean. The updated screenshot gallery renders from the current Flutter widgets with injected example data.
 - The checked core theme text/surface pairs exceed **4.5:1** contrast; this is not a full accessibility-conformance claim.
 - Physical frequency error, mechanical tension accuracy, and full device integration tests remain unverified. See [device validation](docs/DEVICE_VALIDATION.md).

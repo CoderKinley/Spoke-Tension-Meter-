@@ -41,3 +41,15 @@ it shows the separate Tension page.
 See [theme research](../THEME.md), [wheel mapping](../WHEEL_MAPPING.md), and
 [device validation](../DEVICE_VALIDATION.md). Return to the
 [project README](../../README.md).
+
+## Illustrated wheel guide
+
+| Inspect first | Which way to turn |
+| --- | --- |
+| <img src="guide.png" alt="Guide explaining rim versus tire inspection" width="300"> | <img src="guide-turns.png" alt="Nipple turning direction and selectable viewpoint" width="300"> |
+
+| Lateral wobble | Radial roundness |
+| --- | --- |
+| <img src="guide-lateral.png" alt="Spoke pull correcting a sideways rim deviation" width="300"> | <img src="guide-radial.png" alt="High spot and inward radial correction" width="300"> |
+
+See [guide sources and limitations](../WHEEL_GUIDE.md).

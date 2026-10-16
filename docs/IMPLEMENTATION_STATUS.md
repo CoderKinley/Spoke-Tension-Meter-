@@ -7,7 +7,7 @@ The phone confirmation above applies to the preceding responsive-detector update
 ## Checks completed
 
 - Dart analysis of application, unit/widget tests, device smoke test and test driver: no errors or warnings at the time of the recorded check.
-- 65 unit/widget tests executed in Flutter's Windows test engine through a direct in-process test harness. All passed. The normal Flutter CLI runner could not start child processes in this session; this is not a claim that `flutter test` itself completed.
+- 70 unit/widget tests executed in Flutter's Windows test engine through a direct in-process test harness. All passed. The normal Flutter CLI runner could not start child processes in this session; this is not a claim that `flutter test` itself completed.
 - Covered independent DFT versus FFT, harmonic signals at 44.1/48 kHz, dominant second harmonic, missing fundamental, single-tone labelling, clipping/noise/silence, unrelated tones, unstable windows, SI units, experimental calibration limits, repeat gates, reference context, PCM decoding, packet loss, stream closure, streamed audio through onset detection and the analysis isolate, persistence, corruption handling and navigation.
 - The fixed Measure layout passed at 320 × 640 / 150% text, 360 × 800, 412 × 915 / 200% text, and 800 × 420 landscape. Frequency, wheel and controls fit without a Measure scroll view. Actual widget previews include the new dashboard, landscape and spoke details; these use injected data and are not device measurement screenshots.
 - `MainActivity.kt` independently compiled with Kotlin 2.3.20, Android 36 API stubs, Flutter's matching embedding and lifecycle dependencies. This checks Kotlin/API compatibility, not Android runtime behavior or APK packaging.
@@ -40,3 +40,7 @@ On a normally connected development machine, run the README commands and [device
 ## Before a usable release
 
 Rebuild and install the APK and complete the device checklist, investigate real microphone failure modes and collect repeatability evidence. Validate absolute tension separately against a calibrated reference with independent held-out observations before treating any displayed model value as a tension measurement. The user currently has a wheel but no tension meter; frequency-only testing can proceed without changing its tension. The experimental calculator does not replace this validation.
+
+## Illustrated Guide
+
+The offline Guide page adds original vector illustrations for rim/tire inspection, reversible nipple-turn viewpoints, lateral correction, and radial high/low spots. It is available from navigation, help, and the tools menu. Opening it stops capture. The full direct test suite now has 70 passing tests, including guide interactions, source expansion, accessible diagram descriptions, and compact/large-text/landscape checks. See [guide research and scope](WHEEL_GUIDE.md). Physical repair outcomes and the new page on the phone remain unverified.

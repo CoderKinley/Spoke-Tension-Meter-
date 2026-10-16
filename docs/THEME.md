@@ -43,7 +43,7 @@ reading exists; SETTLED still describes repeatability only.
 The 16 checked opaque combinations of main text, supporting text, blue, and
 amber against the four principal surfaces range from 4.76:1 to 16.42:1. This
 checks palette pairs, not complete accessibility conformance or outdoor
-readability. Existing unit/widget tests pass (65), including compact screens,
+readability. Existing unit/widget tests pass (70), including compact screens,
 large text, landscape, and wheel-map interactions. Updated previews under
 `docs/previews/` render actual Flutter widgets with synthetic readings; they
 are not phone captures or physical accuracy validation.

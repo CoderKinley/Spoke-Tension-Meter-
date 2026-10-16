@@ -16,6 +16,7 @@ import '../test/controller_test.dart' as controller;
 import '../test/storage_test.dart' as storage;
 import '../test/app_test.dart' as app;
 import '../test/dashboard_test.dart' as dashboard;
+import '../test/guide_test.dart' as guide;
 
 Future<void> main() async {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +28,7 @@ Future<void> main() async {
     group('Storage', storage.main);
     group('Widgets', app.main);
     group('Dashboard', dashboard.main);
+    group('Guide', guide.main);
   });
   final suite = Suite(declarer.build(), SuitePlatform(Runtime.vm));
   var total = 0, failed = 0;
